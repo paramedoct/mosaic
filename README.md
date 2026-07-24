@@ -1,4 +1,5 @@
 ## SCRY
-- Picture metadata management
-- Picture display
+- Picture curation
+- Basic search
+- Animation playback ( Chafa )
 <br></br>
