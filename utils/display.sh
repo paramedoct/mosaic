@@ -74,6 +74,7 @@ display_image_start() {
   local mime
   local view_size
   local -a animation_args
+  local -a quality_args
   path=$1
   rows=$2
   cols=$3
@@ -83,6 +84,13 @@ display_image_start() {
     animation_args=(--animate on --duration infinite)
   else
     animation_args=(--animate off)
+  fi
+  quality_args=()
+  if [ "$SCRY_DISPLAY_FORMAT" = sixels ]; then
+    quality_args=(
+      --dither diffusion
+      --dither-intensity 1.0
+    )
   fi
   (
     local image_pid
@@ -94,7 +102,8 @@ display_image_start() {
     ' TERM
     printf '\033[H'
     chafa --probe off --format "$SCRY_DISPLAY_FORMAT" \
-      "${animation_args[@]}" --scale max --align top,left \
+      "${animation_args[@]}" "${quality_args[@]}" \
+      --scale max --align top,left \
       --size "$view_size" "$path" &
     image_pid=$!
     wait "$image_pid"
