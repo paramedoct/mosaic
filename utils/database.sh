@@ -14,6 +14,26 @@ database_value() {
     -cmd 'PRAGMA foreign_keys = ON;' "$SCRY_DB_FILE" "$1"
 }
 
+database_settings_migrate() {
+  local schema
+  schema=$(database_value \
+    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'settings';")
+  case "$schema" in
+    *"'loupe'"*) return 0 ;;
+  esac
+  database_run "
+BEGIN;
+CREATE TABLE settings_new (
+  id INTEGER PRIMARY KEY CHECK(id = 1),
+  display_format TEXT NOT NULL
+    CHECK(display_format IN ('iterm', 'kitty', 'loupe', 'sixels', 'symbols'))
+);
+INSERT INTO settings_new SELECT * FROM settings;
+DROP TABLE settings;
+ALTER TABLE settings_new RENAME TO settings;
+COMMIT;"
+}
+
 database_init() {
   local sql
   local violations
@@ -32,7 +52,7 @@ CREATE TABLE IF NOT EXISTS images (
 CREATE TABLE IF NOT EXISTS settings (
   id INTEGER PRIMARY KEY CHECK(id = 1),
   display_format TEXT NOT NULL
-    CHECK(display_format IN ('iterm', 'kitty', 'sixels', 'symbols'))
+    CHECK(display_format IN ('iterm', 'kitty', 'loupe', 'sixels', 'symbols'))
 );
 
 CREATE INDEX IF NOT EXISTS images_classification_idx
@@ -42,6 +62,7 @@ INSERT OR IGNORE INTO settings (id, display_format) VALUES (1, 'symbols');
 SQL
 )
   database_run "$sql"
+  database_settings_migrate
   violations=$(database_value "PRAGMA foreign_key_check;")
   if [ -n "$violations" ]; then
     echo "foreign key check failed" >&2

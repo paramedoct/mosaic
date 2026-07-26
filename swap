@@ -3,7 +3,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  echo "$0 [iterm|kitty|sixels|symbols]" >&2
+  echo "$0 [iterm|kitty|loupe|sixels|symbols]" >&2
   exit 1
 }
 
@@ -22,7 +22,7 @@ main() {
   fi
   format=$1
   case "$format" in
-    iterm | kitty | sixels | symbols) ;;
+    iterm | kitty | loupe | sixels | symbols) ;;
     *) usage ;;
   esac
   database_run "UPDATE settings

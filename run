@@ -56,6 +56,10 @@ main() {
       fi
       return 0
     fi
+    if [ "$SCRY_DISPLAY_FORMAT" = loupe ]; then
+      display_image_view "${result_targets[@]}"
+      return 0
+    fi
     if display_browser "${result_targets[@]}"; then
       return 0
     else

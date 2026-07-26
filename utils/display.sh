@@ -125,12 +125,26 @@ display_image_stop() {
 }
 
 display_image_view() {
+  local target
+  local record
+  local sha
+  local source
   local path
-  path=$1
+  local -a paths
   if ! command -v loupe >/dev/null 2>&1; then
     return 0
   fi
-  loupe "$path" </dev/null >/dev/null 2>&1 &
+  paths=()
+  for target in "$@"; do
+    record=$(image_require "$target")
+    IFS=$'\t' read -r _ sha source _ <<<"$record"
+    path=$(image_path "$source" "$sha")
+    if [ -r "$path" ]; then
+      paths+=("$path")
+    fi
+  done
+  if [ "${#paths[@]}" -eq 0 ]; then return 0; fi
+  loupe "${paths[@]}" </dev/null >/dev/null 2>&1
 }
 
 display_browser() {
@@ -187,10 +201,6 @@ display_browser() {
         $'\033[B' | $'\033[C') delta=1 ;;
         x | X)
           if display_action_confirm "$rows" "$pager"; then break; fi
-          continue
-          ;;
-        v | V)
-          display_image_view "$path"
           continue
           ;;
         q | Q | $'\033') break ;;
