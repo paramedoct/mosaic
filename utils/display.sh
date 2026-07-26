@@ -124,6 +124,15 @@ display_image_stop() {
   [ "$status" -eq 0 ] || [ "$status" -eq 143 ]
 }
 
+display_image_view() {
+  local path
+  path=$1
+  if ! command -v loupe >/dev/null 2>&1; then
+    return 0
+  fi
+  loupe "$path" </dev/null >/dev/null 2>&1 &
+}
+
 display_browser() {
   local total
   local selected
@@ -178,6 +187,10 @@ display_browser() {
         $'\033[B' | $'\033[C') delta=1 ;;
         x | X)
           if display_action_confirm "$rows" "$pager"; then break; fi
+          continue
+          ;;
+        v | V)
+          display_image_view "$path"
           continue
           ;;
         q | Q | $'\033') break ;;
