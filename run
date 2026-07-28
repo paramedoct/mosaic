@@ -12,12 +12,14 @@ source "$ROOT_DIR/utils/source.sh"
 source_modules \
   utils/database.sh \
   utils/image.sh \
+  utils/garbage.sh \
   utils/location.sh \
   utils/display.sh
 
 main() {
   local targets
   local arg
+  local status
   local -a location_args
   local -a result_targets
   location_args=()
@@ -37,6 +39,7 @@ main() {
     *) usage ;;
   esac
   database_prepare
+  garbage_collect
   targets=$(location_search "${location_args[@]}")
   while IFS= read -r arg; do
     [ -n "$arg" ] && result_targets+=("$arg")
@@ -47,7 +50,10 @@ main() {
     fi
     return 0
   fi
-  display_image_view "${result_targets[@]}"
+  status=0
+  display_image_view "${result_targets[@]}" || status=$?
+  garbage_collect
+  return "$status"
 }
 
 main "$@"
