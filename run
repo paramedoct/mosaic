@@ -18,7 +18,6 @@ source_modules \
 main() {
   local targets
   local arg
-  local status
   local -a location_args
   local -a result_targets
   location_args=()
@@ -38,35 +37,17 @@ main() {
     *) usage ;;
   esac
   database_prepare
-  if [ -t 0 ] && [ -t 1 ]; then
-    display_cursor_hide
-    trap display_cursor_show EXIT
+  targets=$(location_search "${location_args[@]}")
+  while IFS= read -r arg; do
+    [ -n "$arg" ] && result_targets+=("$arg")
+  done <<<"$targets"
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    if [ "${#result_targets[@]}" -gt 0 ]; then
+      printf '%s\n' "${result_targets[@]}"
+    fi
+    return 0
   fi
-  # shellcheck disable=SC2034
-  DISPLAY_SELECTED=0
-  while :; do
-    result_targets=()
-    targets=$(location_search "${location_args[@]}")
-    while IFS= read -r arg; do
-      [ -n "$arg" ] && result_targets+=("$arg")
-    done <<<"$targets"
-    if [ ! -t 0 ] || [ ! -t 1 ]; then
-      if [ "${#result_targets[@]}" -gt 0 ]; then
-        printf '%s\n' "${result_targets[@]}"
-      fi
-      return 0
-    fi
-    if [ "$SCRY_DISPLAY_FORMAT" = loupe ]; then
-      display_image_view "${result_targets[@]}"
-      return 0
-    fi
-    if display_browser "${result_targets[@]}"; then
-      return 0
-    else
-      status=$?
-    fi
-    [ "$status" -eq 10 ] || return "$status"
-  done
+  display_image_view "${result_targets[@]}"
 }
 
 main "$@"
