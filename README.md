@@ -1,5 +1,5 @@
 ## SCRY
 - Picture curation
 - Basic search
-- Animation playback ( Chafa )
+- Animation playback ( Loupe )
 <br></br>
