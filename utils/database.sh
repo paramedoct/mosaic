@@ -29,16 +29,8 @@ CREATE TABLE IF NOT EXISTS images (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
-CREATE TABLE IF NOT EXISTS settings (
-  id INTEGER PRIMARY KEY CHECK(id = 1),
-  display_format TEXT NOT NULL
-    CHECK(display_format IN ('iterm', 'kitty', 'loupe', 'sixels', 'symbols'))
-);
-
 CREATE INDEX IF NOT EXISTS images_classification_idx
 ON images(subject, source);
-
-INSERT OR IGNORE INTO settings (id, display_format) VALUES (1, 'symbols');
 SQL
 )
   database_run "$sql"
@@ -56,7 +48,4 @@ database_prepare() {
   SCRY_DB_FILE=$SCRY_STATE_DIR/scry.db
   mkdir -p "$SCRY_IMAGES_DIR" "$SCRY_STATE_DIR"
   database_init
-  # shellcheck disable=SC2034
-  SCRY_DISPLAY_FORMAT=$(database_value \
-    "SELECT display_format FROM settings WHERE id = 1;")
 }
