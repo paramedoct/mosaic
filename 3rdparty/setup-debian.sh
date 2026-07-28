@@ -2,4 +2,4 @@
 set -euo pipefail
 
 sudo apt update
-sudo apt install chafa curl file sqlite3 unzip
+sudo apt install curl file loupe sqlite3 unzip
