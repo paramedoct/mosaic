@@ -74,10 +74,15 @@ abc_titles() {
   local file
   file=$1
   awk '
+    /^[[:space:]]*X:[[:space:]]*/ {
+      number = $0
+      sub(/^[^:]*:[[:space:]]*/, "", number)
+      sub(/[[:space:]].*$/, "", number)
+    }
     /^[[:space:]]*T:[[:space:]]*/ {
       title = $0
       sub(/^[^:]*:[[:space:]]*/, "", title)
-      print title
+      print number ":" title
       found = 1
     }
     END {
