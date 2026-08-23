@@ -14,7 +14,6 @@ source_modules \
 
 main() {
   local file
-
   [ "$#" -eq 1 ] || usage
   file=$(abc_file "$1")
   abc_titles "$file"

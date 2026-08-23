@@ -14,14 +14,12 @@ source_modules \
 
 main() {
   local reference file
-
   [ "$#" -eq 1 ] || usage
   reference=$1
   abc_name=
   abc_number=
   abc_parse_reference "$reference"
   file=$(abc_file "$abc_name")
-
   tmp=$(mktemp --suffix=.mid)
   trap 'rm -f "$tmp"' EXIT
 

@@ -8,7 +8,6 @@ abc_error() {
 
 abc_parse_reference() {
   local reference
-
   reference=$1
   case "$reference" in
     *:*)
@@ -19,13 +18,11 @@ abc_parse_reference() {
       abc_error "usage: $0 <name:Xnum>"
       ;;
   esac
-
   case "$abc_name" in
     ''|.|..|*/*)
       abc_error "invalid abc name: $abc_name"
       ;;
   esac
-
   case "$abc_number" in
     ''|*[!0-9]*)
       abc_error "invalid X number: $abc_number"
@@ -35,7 +32,6 @@ abc_parse_reference() {
 
 abc_file() {
   local name
-
   name=$1
   case "$name" in
     ''|.|..|*/*)
@@ -43,18 +39,15 @@ abc_file() {
       return
       ;;
   esac
-
   if [ ! -f "$ABC_DIR/$name.abc" ]; then
     abc_error "abc file not found: $name.abc"
     return
   fi
-
   echo "$ABC_DIR/$name.abc"
 }
 
 abc_extract_tune() {
   local file target
-
   file=$1
   target=$2
   awk -v target="$target" '
@@ -79,7 +72,6 @@ abc_extract_tune() {
 
 abc_titles() {
   local file
-
   file=$1
   awk '
     /^[[:space:]]*T:[[:space:]]*/ {
