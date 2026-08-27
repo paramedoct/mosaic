@@ -26,6 +26,7 @@ main() {
   abc_extract_tune "$file" "$abc_number" |
     abc2midi - -o "$tmp" &&
     timidity -c /etc/timidity/fluidr3_gm.cfg \
+      --no-realtime-load -S 16M \
       -Ow -o - "$tmp" 2>/dev/null |
     paplay
 }
