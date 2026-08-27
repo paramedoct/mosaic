@@ -15,12 +15,12 @@ abc_parse_reference() {
       abc_number=${reference#*:}
       ;;
     *)
-      abc_error "usage: $0 <name:Xnum>"
+      abc_error "usage: $0 <abc/file:Xnum>"
       ;;
   esac
   case "$abc_name" in
-    ''|.|..|*/*)
-      abc_error "invalid abc name: $abc_name"
+    ''|.|..|/*|*..*|*//*|*/|*\\*|*' '*)
+      abc_error "invalid abc path: $abc_name"
       ;;
   esac
   case "$abc_number" in
@@ -31,19 +31,25 @@ abc_parse_reference() {
 }
 
 abc_file() {
-  local name
+  local name path
   name=$1
-  case "$name" in
-    ''|.|..|*/*)
-      abc_error "invalid abc name: $name"
+  path=$name
+  case "$path" in
+    abc/*)
+      path=${path#abc/}
+      ;;
+  esac
+  case "$path" in
+    ''|.|..|/*|*..*|*//*|*/|*\\*|*' '*)
+      abc_error "invalid abc path: $name"
       return
       ;;
   esac
-  if [ ! -f "$ABC_DIR/$name.abc" ]; then
-    abc_error "abc file not found: $name.abc"
+  if [ ! -f "$ABC_DIR/$path" ]; then
+    abc_error "abc file not found: abc/$path"
     return
   fi
-  echo "$ABC_DIR/$name.abc"
+  echo "$ABC_DIR/$path"
 }
 
 abc_extract_tune() {
