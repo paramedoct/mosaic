@@ -1,9 +1,7 @@
-export interface DataRecord {
-  timestamp: number;
-  payload: unknown;
+export interface Provider<T> {
+  fetch(): Promise<T>;
 }
 
-export interface DataSource {
-  start(emit: (record: DataRecord) => void): Promise<void>;
-  stop(): void;
+export interface Viewer<T> {
+  render(data: T): void;
 }
