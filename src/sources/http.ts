@@ -1,7 +1,10 @@
 import type { DataRecord, DataSource } from "../types";
 
 export class HttpSource implements DataSource {
-  constructor(private readonly url: string) {}
+  private readonly url: string;
+  constructor(url: string) {
+    this.url = url;
+  }
 
   async start(emit: (record: DataRecord) => void): Promise<void> {
     const response = await fetch(this.url);
