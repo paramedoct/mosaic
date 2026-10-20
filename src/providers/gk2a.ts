@@ -16,7 +16,7 @@ interface Gk2aResponse {
       resultMsg: string;
     };
     body: {
-      items?: {
+      items: {
         item: {
           "satImgC-file": string[];
         }[];
@@ -52,7 +52,7 @@ export class Gk2aProvider {
     url.searchParams.set("time", request.time.toISOString().slice(0, 10).replaceAll("-", ""));
 
     const response = await this.http.get(url.toString());
-    const json: unknown = await response.json() as Gk2aResponse;
+    const json = await response.json() as Gk2aResponse;
     const { header, body } = json.response;
     if (header.resultCode !== "00") {
       throw new Error(`GK2A API: ${header.resultMsg}`);
