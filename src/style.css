@@ -36,7 +36,7 @@ main { width: 100%; flex: 1; display: grid; align-items: center; }
 .weather-view { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; }
 .weather-stage {
   width: 100%;
-  min-height: 320px;
+  height: 65dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -44,7 +44,7 @@ main { width: 100%; flex: 1; display: grid; align-items: center; }
 .weather-empty { padding: 64px; color: #52645f; }
 .weather-empty svg { width: 48px; height: 48px; }
 .weather-empty[hidden], .weather-image:not([src]) { display: none; }
-.weather-image { display: block; max-width: 100%; max-height: 65dvh; object-fit: contain; }
+.weather-image { display: block; width: 100%; height: 100%; min-width: 0; object-fit: contain; }
 .weather-playback { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding-bottom: 100px; color: #a5aeb9; font-size: 13px; }
 .weather-playback > span { position: absolute; top: 50px; font-variant-numeric: tabular-nums; }
 .weather-settings button[aria-expanded="true"] { border-color: #83d8c0; color: #a6e6d4; }
@@ -54,11 +54,11 @@ main { width: 100%; flex: 1; display: grid; align-items: center; }
 input[type="password"] { width: min(100%, 260px); min-width: 0; }
 button:hover:enabled { background: #2c3540; }
 button.primary-button { color: #a6e6d4; }
-button:disabled { opacity: 0.5; cursor: wait; }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary-button:disabled { cursor: wait; }
 input[type="checkbox"] { accent-color: #9ee5d0; }
 :focus-visible { outline: 2px solid #9ee5d0; outline-offset: 3px; }
 
 @media (max-width: 600px) {
   #app { padding: 20px 16px; gap: 16px; }
-  .weather-stage { min-height: 260px; }
 }

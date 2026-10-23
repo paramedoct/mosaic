@@ -1,7 +1,7 @@
 const paths = {
   refresh: "M20 7v5h-5 M20 12a8 8 0 1 0-2.3 5.7",
-  play: "m9 5 11 7-11 7Z",
-  pause: "M8 5v14 M16 5v14",
+  previous: "m15 5-7 7 7 7",
+  next: "m9 5 7 7-7 7",
   key: "M15 3a6 6 0 1 1-4.8 9.6L3 20v-4l6.6-6.6A6 6 0 0 1 15 3Z M17 7h.01",
   trash: "M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7",
   satellite: "m4 4 4-2 4 4-4 4Z m8 8 4-4 6 6-4 4Z M9 9l6 6 M5 13a6 6 0 0 1 6 6 M3 17a2 2 0 0 1 2 2",

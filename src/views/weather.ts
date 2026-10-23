@@ -32,8 +32,12 @@ function mount(app: HTMLElement): () => void {
   image.className = "weather-image";
   image.alt = "GK2A satellite imagery";
 
-  const play = document.createElement("button");
-  setAction(play, "play", "Play");
+  const previous = document.createElement("button");
+  setAction(previous, "previous", "Previous image");
+  previous.disabled = true;
+  const next = document.createElement("button");
+  setAction(next, "next", "Next image");
+  next.disabled = true;
 
   const status = document.createElement("span");
   status.setAttribute("role", "status");
@@ -103,7 +107,7 @@ function mount(app: HTMLElement): () => void {
   stage.append(empty, image);
   const playback = document.createElement("div");
   playback.className = "weather-playback";
-  playback.append(play, status);
+  playback.append(previous, next, status);
   const view = document.createElement("section");
   view.className = "weather-view";
   playback.prepend(load, settings);
@@ -112,18 +116,38 @@ function mount(app: HTMLElement): () => void {
 
   let urls: string[] = [];
   let index = 0;
-  let timer: number | undefined;
+  let frameRequest = 0;
 
-  function show(): void {
+  function updateNavigation(): void {
+    previous.disabled = load.disabled || index <= 0 || urls.length === 0;
+    next.disabled = load.disabled || index >= urls.length - 1;
+  }
+
+  async function show(): Promise<void> {
     if (urls.length === 0) return;
 
-    image.src = urls[index];
+    const request = ++frameRequest;
+    const frameIndex = index;
+    const frame = new Image();
+    frame.src = urls[frameIndex];
+
+    try {
+      await frame.decode();
+    } catch {
+      if (request === frameRequest) status.textContent = "Load failed";
+      return;
+    }
+    if (request !== frameRequest) return;
+
+    image.src = frame.src;
     empty.hidden = true;
-    status.textContent = ` ${index + 1} / ${urls.length}`;
+    status.textContent = ` ${frameIndex + 1} / ${urls.length}`;
   }
 
   load.onclick = async () => {
+    ++frameRequest;
     load.disabled = true;
+    updateNavigation();
     status.textContent = "…";
 
     try {
@@ -132,44 +156,46 @@ function mount(app: HTMLElement): () => void {
         key.value.trim()
       );
 
-      urls = await provider.getFrames({
+      urls = (await provider.getFrames({
         time: new Date(),
         area: "ea",
-        data: "rgbt",
-      });
+        data: "rgbdn",
+      })).filter(url => url.toLowerCase().includes("thn")).sort();
 
-      index = 0;
-      show();
+      index = Math.max(0, urls.length - 1);
+      if (urls.length === 0) {
+        image.removeAttribute("src");
+        empty.hidden = false;
+        status.textContent = "No imagery available";
+      } else {
+        await show();
+      }
       if (urls.length > 0) setSettingsOpen(false);
     } catch {
       status.textContent = "Load failed";
     } finally {
       load.disabled = false;
+      updateNavigation();
     }
   };
 
-  play.onclick = () => {
-    if (timer !== undefined) {
-      clearInterval(timer);
-      timer = undefined;
-      setAction(play, "play", "Play");
-      return;
-    }
-
-    if (urls.length === 0) return;
-
-    setAction(play, "pause", "Pause");
-
-    timer = window.setInterval(() => {
-      index = (index + 1) % urls.length;
-      show();
-    }, 500);
+  previous.onclick = () => {
+    if (index <= 0) return;
+    --index;
+    updateNavigation();
+    void show();
+  };
+  next.onclick = () => {
+    if (index >= urls.length - 1) return;
+    ++index;
+    updateNavigation();
+    void show();
   };
 
   if (key.value.trim()) load.click();
 
   return () => {
-    window.clearInterval(timer);
+    ++frameRequest;
   };
 }
 
