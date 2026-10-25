@@ -1,3 +1,5 @@
+import type { IconName } from "./icons";
+
 export interface Provider<T> {
   fetch(): Promise<T>;
 }
@@ -9,5 +11,6 @@ export interface Viewer<T> {
 export interface View {
   title: string;
   category: string;
-  mount(container: HTMLElement): () => void;
+  icon?: IconName;
+  mount(container: HTMLElement, tools: HTMLElement): () => void;
 }

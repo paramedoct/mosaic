@@ -12,6 +12,11 @@ interface Frame {
 }
 
 const KST_OFFSET = 9 * 60 * 60_000;
+const TIME_STEP = 10 * 60_000;
+
+function floorTime(time: number): number {
+  return Math.floor(time / TIME_STEP) * TIME_STEP;
+}
 
 function formatKst(time: number): string {
   return new Date(time + KST_OFFSET).toISOString().slice(0, 16);
@@ -54,9 +59,11 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
   let frames: Frame[] = [];
   let requestId = 0;
   let disposed = false;
+  let aspectRatio: number | undefined;
 
   return {
     element,
+    get aspectRatio(): number | undefined { return aspectRatio; },
     get times(): number[] { return frames.map(frame => frame.time); },
     async show(time: number): Promise<void> {
       const request = ++requestId;
@@ -77,7 +84,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
           continue;
         }
         if (disposed || request !== requestId) return;
-        element.style.flexGrow = String(frame.naturalWidth / frame.naturalHeight);
+        aspectRatio = frame.naturalWidth / frame.naturalHeight;
         image.src = frame.src;
         empty.hidden = true;
         status.textContent = "";
@@ -108,7 +115,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
   };
 }
 
-function mount(app: HTMLElement): () => void {
+function mount(app: HTMLElement, tools: HTMLElement): () => void {
   const key = document.createElement("input");
   key.type = "password";
   key.placeholder = "API Key";
@@ -186,24 +193,35 @@ function mount(app: HTMLElement): () => void {
   setSettingsOpen(!key.value.trim());
   settings.append(settingsToggle);
 
-  const satellite = createPanel("East Asia satellite", "KMA satellite imagery", "UTC");
+  const satellite = createPanel("East Asia satellite", "KMA East Asia satellite imagery", "UTC");
+  const koreaSatellite = createPanel("Korea satellite", "KMA Korea satellite imagery", "UTC");
   const radar = createPanel("Korea radar", "KMA radar imagery", "KST");
+  const detail = document.createElement("div");
+  detail.className = "weather-detail";
+  detail.append(koreaSatellite.element, radar.element);
   const panels = document.createElement("div");
   panels.className = "weather-panels";
-  panels.append(satellite.element, radar.element);
+  panels.append(satellite.element, detail);
+  const workspace = app.closest<HTMLElement>(".app-workspace");
+  function alignImageHeights(): void {
+    if (!workspace || !satellite.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) return;
+    const columnRatio = satellite.aspectRatio * (1 / koreaSatellite.aspectRatio + 1 / radar.aspectRatio);
+    panels.style.setProperty("--weather-grid-columns", `minmax(0, ${columnRatio}fr) minmax(0, 1fr)`);
+    workspace.style.setProperty("--weather-layout-width",
+      `calc(var(--weather-detail-width) * ${1 + columnRatio} + 2 * var(--workspace-padding))`);
+  }
   const toolbar = document.createElement("div");
   toolbar.className = "weather-toolbar";
-  const title = document.createElement("h1");
-  title.textContent = "Weather imagery";
   const actions = document.createElement("div");
   actions.className = "weather-actions";
   const time = document.createElement("input");
   time.type = "datetime-local";
+  time.step = "600";
   time.setAttribute("aria-label", "Imagery date and time (KST)");
   const timeLabel = document.createElement("label");
   timeLabel.className = "weather-time";
   timeLabel.append(time, "KST");
-  time.value = formatKst(Date.now());
+  time.value = formatKst(floorTime(Date.now()));
   const previous = document.createElement("button");
   setAction(previous, "previous", "Previous observation time");
   const next = document.createElement("button");
@@ -211,10 +229,11 @@ function mount(app: HTMLElement): () => void {
   const now = document.createElement("button");
   setAction(now, "now", "Go to current time");
   actions.append(previous, timeLabel, next, now, settings);
-  toolbar.append(title, status, actions);
+  toolbar.append(status, actions);
   const view = document.createElement("section");
   view.className = "weather-view";
-  view.append(toolbar, controls, panels);
+  tools.append(toolbar);
+  view.append(controls, panels);
   app.replaceChildren(view);
   let disposed = false;
   let loading = false;
@@ -229,8 +248,10 @@ function mount(app: HTMLElement): () => void {
     updateNavigation();
     await Promise.all([
       ...(satellite.times.length ? [satellite.show(selectedTime)] : []),
+      ...(koreaSatellite.times.length ? [koreaSatellite.show(selectedTime)] : []),
       ...(radar.times.length ? [radar.show(selectedTime)] : []),
     ]);
+    if (!disposed) alignImageHeights();
   }
   function select(value: number): void {
     selectedTime = value;
@@ -246,13 +267,15 @@ function mount(app: HTMLElement): () => void {
     if (value !== undefined) select(value);
   };
   time.onchange = () => {
-    if (!time.value || !time.validity.valid) return;
-    selectedTime = new Date(time.value + "+09:00").getTime();
+    if (!time.value) return;
+    selectedTime = floorTime(new Date(time.value + "+09:00").getTime());
+    if (!Number.isFinite(selectedTime)) return;
+    time.value = formatKst(selectedTime);
     if (time.value.slice(0, 10) !== loadedDay) void refresh();
     else void show();
   };
   now.onclick = () => {
-    time.value = formatKst(Date.now());
+    time.value = formatKst(floorTime(Date.now()));
     void refresh();
   };
   async function refresh(): Promise<void> {
@@ -266,26 +289,29 @@ function mount(app: HTMLElement): () => void {
     const date = new Date(time.value + "+09:00");
     const dayStart = new Date(time.value.slice(0, 10) + "T00:00:00+09:00").getTime();
     selectedTime = date.getTime();
+    async function getSatelliteFrames(area: "ea" | "ko"): Promise<string[]> {
+      const provider = new KmaSatProvider(http, serviceKey);
+      const days = [dayStart, dayStart + 24 * 60 * 60_000 - 1];
+      const results = await Promise.allSettled(days.map(value => provider.getFrames({
+        time: new Date(value), area, data: area === "ea" ? "rgbdn" : "ir105",
+      })));
+      const frames = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
+      if (results.every(result => result.status === "rejected")) {
+        throw new Error("Satellite imagery unavailable");
+      }
+      return [...new Set(frames)].filter(url => area === "ko" || !url.toLowerCase().includes("thn"));
+    }
     const results = await Promise.all([
-      satellite.refresh(async () => {
-        const provider = new KmaSatProvider(http, serviceKey);
-        const days = [dayStart, dayStart + 24 * 60 * 60_000 - 1];
-        const results = await Promise.allSettled(days.map(value => provider.getFrames({
-          time: new Date(value), area: "ea", data: "rgbdn",
-        })));
-        const frames = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
-        if (results.every(result => result.status === "rejected")) {
-          throw new Error("Satellite imagery unavailable");
-        }
-        return [...new Set(frames)].filter(url => url.toLowerCase().includes("thn"));
-      }),
+      satellite.refresh(() => getSatelliteFrames("ea")),
+      koreaSatellite.refresh(() => getSatelliteFrames("ko")),
       radar.refresh(() => new KmaRadarProvider(http, serviceKey).getFrames({
         time: new Date(date.getTime() + KST_OFFSET),
       })),
     ]);
     if (disposed) return;
     loadedDay = time.value.slice(0, 10);
-    timeline = [...new Set([...satellite.times, ...radar.times])]
+    timeline = [...new Set([...satellite.times, ...koreaSatellite.times, ...radar.times])]
+      .filter(value => value % TIME_STEP === 0)
       .filter(value => formatKst(value).slice(0, 10) === loadedDay)
       .sort((a, b) => a - b);
     if (results.some(Boolean)) setSettingsOpen(false);
@@ -300,13 +326,17 @@ function mount(app: HTMLElement): () => void {
 
   return () => {
     disposed = true;
+    workspace?.style.removeProperty("--weather-layout-width");
+    toolbar.remove();
     satellite.dispose();
+    koreaSatellite.dispose();
     radar.dispose();
   };
 }
 
 export default {
-  title: "Satellite & radar",
+  title: "Weather",
+  icon: "weather",
   category: "Weather",
   mount,
 } satisfies View;

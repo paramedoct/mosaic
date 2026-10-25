@@ -1,4 +1,6 @@
 const paths = {
+  mosaic: "M3 3h7v7H3Z M14 3h7v7h-7Z M3 14h7v7H3Z M14 14h7v7h-7Z",
+  weather: "M7 14a4 4 0 1 1 5-6 M8 3V1 M3 5 1.5 3.5 M3 10H1 M15 5l1.5-1.5 M8 20h10a4 4 0 0 0 .5-8 5 5 0 0 0-9.5 1A3.5 3.5 0 0 0 8 20Z",
   refresh: "M20 7v5h-5 M20 12a8 8 0 1 0-2.3 5.7",
   now: "M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0 M12 6v6l4 2",
   previous: "m15 5-7 7 7 7",
@@ -8,7 +10,7 @@ const paths = {
   satellite: "m4 4 4-2 4 4-4 4Z m8 8 4-4 6 6-4 4Z M9 9l6 6 M5 13a6 6 0 0 1 6 6 M3 17a2 2 0 0 1 2 2",
 } as const;
 
-type IconName = keyof typeof paths;
+export type IconName = keyof typeof paths;
 
 export function icon(name: IconName): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
