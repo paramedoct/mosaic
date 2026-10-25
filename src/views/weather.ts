@@ -65,14 +65,19 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
     element,
     get aspectRatio(): number | undefined { return aspectRatio; },
     get times(): number[] { return frames.map(frame => frame.time); },
-    async show(time: number): Promise<void> {
+    async prepare(time: number): Promise<() => void> {
       const request = ++requestId;
+      function commitEmpty(message: string): () => void {
+        return () => {
+          if (disposed || request !== requestId) return;
+          image.removeAttribute("src");
+          empty.hidden = false;
+          status.textContent = message;
+        };
+      }
       const candidates = frames.filter(frame => frame.time <= time).reverse();
       if (candidates.length === 0) {
-        image.removeAttribute("src");
-        empty.hidden = false;
-        status.textContent = "No imagery at this time";
-        return;
+        return commitEmpty("No imagery at this time");
       }
       for (const selected of candidates) {
         const frame = new Image();
@@ -80,34 +85,43 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
         try {
           await frame.decode();
         } catch {
-          if (disposed || request !== requestId) return;
+          if (disposed || request !== requestId) return () => {};
           continue;
         }
-        if (disposed || request !== requestId) return;
+        if (disposed || request !== requestId) return () => {};
         aspectRatio = frame.naturalWidth / frame.naturalHeight;
-        image.src = frame.src;
-        empty.hidden = true;
-        status.textContent = "";
-        return;
+        return () => {
+          if (disposed || request !== requestId) return;
+          stage.style.aspectRatio = `${frame.naturalWidth} / ${frame.naturalHeight}`;
+          image.width = frame.naturalWidth;
+          image.height = frame.naturalHeight;
+          image.src = frame.src;
+          empty.hidden = true;
+          status.textContent = "";
+        };
       }
-      image.removeAttribute("src");
-      empty.hidden = false;
-      status.textContent = "Load failed";
+      return commitEmpty("Load failed");
     },
     async refresh(getFrames: () => Promise<string[]>): Promise<boolean> {
       ++requestId;
       frames = [];
-      image.removeAttribute("src");
-      empty.hidden = false;
-      status.textContent = "Loading…";
+      status.textContent = "";
       try {
         const urls = await getFrames();
         if (disposed) return false;
         frames = parseFrames(urls, timeZone);
+        if (frames.length === 0) {
+          image.removeAttribute("src");
+          empty.hidden = false;
+        }
         status.textContent = frames.length ? "" : "No dated imagery available";
         return frames.length > 0;
       } catch {
-        if (!disposed) status.textContent = "Load failed";
+        if (!disposed) {
+          image.removeAttribute("src");
+          empty.hidden = false;
+          status.textContent = "Load failed";
+        }
         return false;
       }
     },
@@ -204,10 +218,10 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   panels.append(satellite.element, detail);
   const workspace = app.closest<HTMLElement>(".app-workspace");
   function alignImageHeights(): void {
-    if (!workspace || !satellite.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) return;
+    if (!satellite.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) return;
     const columnRatio = satellite.aspectRatio * (1 / koreaSatellite.aspectRatio + 1 / radar.aspectRatio);
     panels.style.setProperty("--weather-grid-columns", `minmax(0, ${columnRatio}fr) minmax(0, 1fr)`);
-    workspace.style.setProperty("--weather-layout-width",
+    workspace?.style.setProperty("--weather-layout-width",
       `calc(var(--weather-detail-width) * ${1 + columnRatio} + 2 * var(--workspace-padding))`);
   }
   const toolbar = document.createElement("div");
@@ -236,6 +250,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   view.append(controls, panels);
   app.replaceChildren(view);
   let disposed = false;
+  let showRequest = 0;
   let loading = false;
   let timeline: number[] = [];
   let loadedDay = "";
@@ -245,13 +260,16 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     next.disabled = loading || !timeline.some(value => value > selectedTime);
   }
   async function show(): Promise<void> {
+    const request = ++showRequest;
     updateNavigation();
-    await Promise.all([
-      ...(satellite.times.length ? [satellite.show(selectedTime)] : []),
-      ...(koreaSatellite.times.length ? [koreaSatellite.show(selectedTime)] : []),
-      ...(radar.times.length ? [radar.show(selectedTime)] : []),
+    const commits = await Promise.all([
+      ...(satellite.times.length ? [satellite.prepare(selectedTime)] : []),
+      ...(koreaSatellite.times.length ? [koreaSatellite.prepare(selectedTime)] : []),
+      ...(radar.times.length ? [radar.prepare(selectedTime)] : []),
     ]);
-    if (!disposed) alignImageHeights();
+    if (disposed || request !== showRequest) return;
+    alignImageHeights();
+    commits.forEach(commit => commit());
   }
   function select(value: number): void {
     selectedTime = value;
@@ -281,6 +299,10 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   async function refresh(): Promise<void> {
     if (loading || !time.value || !time.validity.valid) return;
     loading = true;
+    if (!satellite.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) {
+      toolbar.style.visibility = "hidden";
+    }
+    ++showRequest;
     time.disabled = true;
     now.disabled = true;
     updateNavigation();
@@ -315,10 +337,13 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
       .filter(value => formatKst(value).slice(0, 10) === loadedDay)
       .sort((a, b) => a - b);
     if (results.some(Boolean)) setSettingsOpen(false);
+    await show();
+    if (disposed) return;
     loading = false;
     time.disabled = false;
     now.disabled = false;
-    await show();
+    toolbar.style.removeProperty("visibility");
+    updateNavigation();
   }
   updateNavigation();
 

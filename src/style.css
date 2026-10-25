@@ -7,6 +7,7 @@
 }
 
 * { box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
 body { margin: 0; min-width: 320px; }
 button, input { font: inherit; }
 button { cursor: pointer; }
@@ -83,12 +84,14 @@ main { width: 100%; flex: 1; }
 .weather-panel-status { position: absolute; right: 12px; bottom: 12px; left: 12px; padding: 6px 8px; border-radius: 6px; background: #101419d9; color: #a5aeb9; font-size: 12px; }
 .weather-panel-status:empty { display: none; }
 .weather-stage {
+  position: relative;
   width: 100%;
+  aspect-ratio: 1;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.weather-empty { padding: 64px; color: #52645f; }
+.weather-empty { position: absolute; inset: 0; display: grid; place-items: center; color: #52645f; }
 .weather-empty svg { width: 48px; height: 48px; }
 .weather-empty[hidden], .weather-image:not([src]) { display: none; }
 .weather-image { display: block; width: 100%; height: auto; min-width: 0; }
