@@ -1,5 +1,5 @@
 import { HttpTransport } from "../transports/http";
-import { Gk2aProvider } from "../providers/gk2a";
+import { KmaSatProvider } from "../providers/kmaSat";
 
 import { icon, setAction } from "../icons";
 
@@ -30,7 +30,7 @@ function mount(app: HTMLElement): () => void {
 
   const image = document.createElement("img");
   image.className = "weather-image";
-  image.alt = "GK2A satellite imagery";
+  image.alt = "KMA satellite imagery";
 
   const previous = document.createElement("button");
   setAction(previous, "previous", "Previous image");
@@ -151,7 +151,7 @@ function mount(app: HTMLElement): () => void {
     status.textContent = "…";
 
     try {
-      const provider = new Gk2aProvider(
+      const provider = new KmaSatProvider(
         new HttpTransport(),
         key.value.trim()
       );
