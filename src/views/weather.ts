@@ -1,6 +1,7 @@
 import { HttpTransport } from "../transports/http";
 import { KmaSatProvider } from "../providers/kmaSat";
 import { KmaRadarProvider } from "../providers/kmaRadar";
+import { KmaChartProvider } from "../providers/kmaChart";
 
 import { icon, setAction } from "../icons";
 
@@ -24,13 +25,13 @@ function formatKst(time: number): string {
 
 function parseFrames(urls: string[], timeZone: "UTC" | "KST"): Frame[] {
   return urls.flatMap(url => {
-    const match = new URL(url).pathname.match(/(?<!\d)(20\d{10})(?:\d{2})?(?!\d)/);
+    const match = new URL(url).pathname.match(/(?<!\d)(20\d{8}(?:\d{2})?)(?:\d{2})?(?!\d)/);
     if (!match) return [];
     const value = match[1];
     const zone = timeZone === "KST" ? "+09:00" : "Z";
     const time = Date.parse(
       `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}` +
-      `T${value.slice(8, 10)}:${value.slice(10, 12)}:00${zone}`
+      `T${value.slice(8, 10)}:${value.slice(10, 12) || "00"}:00${zone}`
     );
     if (!Number.isFinite(time)) return [];
     return [{ url, time }];
@@ -207,19 +208,19 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   setSettingsOpen(!key.value.trim());
   settings.append(settingsToggle);
 
-  const satellite = createPanel("East Asia satellite", "KMA East Asia satellite imagery", "UTC");
+  const chart = createPanel("Surface chart", "KMA surface weather chart (UTC, every 3 hours)", "UTC");
   const koreaSatellite = createPanel("Korea satellite", "KMA Korea satellite imagery", "UTC");
   const radar = createPanel("Korea radar", "KMA radar imagery", "KST");
   const detail = document.createElement("div");
   detail.className = "weather-detail";
-  detail.append(koreaSatellite.element, radar.element);
+  detail.append(radar.element, koreaSatellite.element);
   const panels = document.createElement("div");
   panels.className = "weather-panels";
-  panels.append(satellite.element, detail);
+  panels.append(chart.element, detail);
   const workspace = app.closest<HTMLElement>(".app-workspace");
   function alignImageHeights(): void {
-    if (!satellite.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) return;
-    const columnRatio = satellite.aspectRatio * (1 / koreaSatellite.aspectRatio + 1 / radar.aspectRatio);
+    if (!chart.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) return;
+    const columnRatio = chart.aspectRatio * (1 / koreaSatellite.aspectRatio + 1 / radar.aspectRatio);
     panels.style.setProperty("--weather-grid-columns", `minmax(0, ${columnRatio}fr) minmax(0, 1fr)`);
     workspace?.style.setProperty("--weather-layout-width",
       `calc(var(--weather-detail-width) * ${1 + columnRatio} + 2 * var(--workspace-padding))`);
@@ -263,7 +264,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     const request = ++showRequest;
     updateNavigation();
     const commits = await Promise.all([
-      ...(satellite.times.length ? [satellite.prepare(selectedTime)] : []),
+      ...(chart.times.length ? [chart.prepare(selectedTime)] : []),
       ...(koreaSatellite.times.length ? [koreaSatellite.prepare(selectedTime)] : []),
       ...(radar.times.length ? [radar.prepare(selectedTime)] : []),
     ]);
@@ -299,7 +300,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   async function refresh(): Promise<void> {
     if (loading || !time.value || !time.validity.valid) return;
     loading = true;
-    if (!satellite.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) {
+    if (!chart.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) {
       toolbar.style.visibility = "hidden";
     }
     ++showRequest;
@@ -311,28 +312,27 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     const date = new Date(time.value + "+09:00");
     const dayStart = new Date(time.value.slice(0, 10) + "T00:00:00+09:00").getTime();
     selectedTime = date.getTime();
-    async function getSatelliteFrames(area: "ea" | "ko"): Promise<string[]> {
-      const provider = new KmaSatProvider(http, serviceKey);
+    async function getUtcFrames(getFrames: (time: Date) => Promise<string[]>): Promise<string[]> {
       const days = [dayStart, dayStart + 24 * 60 * 60_000 - 1];
-      const results = await Promise.allSettled(days.map(value => provider.getFrames({
-        time: new Date(value), area, data: area === "ea" ? "rgbdn" : "ir105",
-      })));
+      const results = await Promise.allSettled(days.map(value => getFrames(new Date(value))));
       const frames = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
       if (results.every(result => result.status === "rejected")) {
-        throw new Error("Satellite imagery unavailable");
+        throw new Error("Weather imagery unavailable");
       }
-      return [...new Set(frames)].filter(url => area === "ko" || !url.toLowerCase().includes("thn"));
+      return [...new Set(frames)];
     }
     const results = await Promise.all([
-      satellite.refresh(() => getSatelliteFrames("ea")),
-      koreaSatellite.refresh(() => getSatelliteFrames("ko")),
+      chart.refresh(() => getUtcFrames(time =>
+        new KmaChartProvider(http, serviceKey).getFrames({ time }))),
+      koreaSatellite.refresh(() => getUtcFrames(time =>
+        new KmaSatProvider(http, serviceKey).getFrames({ time, area: "ko", data: "rgbdn" }))),
       radar.refresh(() => new KmaRadarProvider(http, serviceKey).getFrames({
         time: new Date(date.getTime() + KST_OFFSET),
       })),
     ]);
     if (disposed) return;
     loadedDay = time.value.slice(0, 10);
-    timeline = [...new Set([...satellite.times, ...koreaSatellite.times, ...radar.times])]
+    timeline = [...new Set([...chart.times, ...koreaSatellite.times, ...radar.times])]
       .filter(value => value % TIME_STEP === 0)
       .filter(value => formatKst(value).slice(0, 10) === loadedDay)
       .sort((a, b) => a - b);
@@ -353,7 +353,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     disposed = true;
     workspace?.style.removeProperty("--weather-layout-width");
     toolbar.remove();
-    satellite.dispose();
+    chart.dispose();
     koreaSatellite.dispose();
     radar.dispose();
   };
