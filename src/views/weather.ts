@@ -46,7 +46,7 @@ function parseFrames(urls: string[], timeZone: "UTC" | "KST"): Frame[] {
   }).sort((a, b) => a.time - b.time);
 }
 
-function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", dust = false) {
+function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageKind?: "dust" | "chart") {
   const element = document.createElement("section");
   element.className = "weather-panel";
   element.setAttribute("aria-label", title);
@@ -59,7 +59,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", dust =
   empty.append(icon("satellite"));
   const stage = document.createElement("div");
   stage.className = "weather-stage";
-  if (dust) stage.classList.add("weather-dust-stage");
+  if (imageKind === "dust") stage.classList.add("weather-dust-stage");
   stage.append(empty, image);
   const status = document.createElement("span");
   status.setAttribute("role", "status");
@@ -100,7 +100,8 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", dust =
         }
         if (disposed || request !== requestId) return () => {};
         // AirKorea's 820-square canvas includes margins around the 674-by-795 chart.
-        const crop = dust && frame.naturalWidth === 820 && frame.naturalHeight === 820;
+        const crop = imageKind === "dust" && frame.naturalWidth === 820 && frame.naturalHeight === 820;
+        const chartMask = imageKind === "chart" && frame.naturalWidth === 1073 && frame.naturalHeight === 802;
         const width = crop ? 674 : frame.naturalWidth;
         const height = crop ? 795 : frame.naturalHeight;
         aspectRatio = width / height;
@@ -108,6 +109,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", dust =
           if (disposed || request !== requestId) return;
           stage.style.aspectRatio = `${width} / ${height}`;
           stage.classList.toggle("weather-dust-cropped", crop);
+          stage.classList.toggle("weather-chart-masked", chartMask);
           image.width = frame.naturalWidth;
           image.height = frame.naturalHeight;
           image.src = frame.src;
@@ -222,11 +224,11 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   setSettingsOpen(!key.value.trim());
   settings.append(settingsToggle);
 
-  const chart = createPanel("Surface chart", "KMA surface weather chart (UTC, every 3 hours)", "UTC");
+  const chart = createPanel("Surface chart", "KMA surface weather chart (UTC, every 3 hours)", "UTC", "chart");
   const koreaSatellite = createPanel("Korea satellite", "KMA Korea satellite imagery", "UTC");
   const radar = createPanel("Korea radar", "KMA radar imagery", "KST");
-  const pm10 = createPanel("PM10", "AirKorea PM10 forecast animation", "KST", true);
-  const pm25 = createPanel("PM2.5", "AirKorea PM2.5 forecast animation", "KST", true);
+  const pm10 = createPanel("PM10", "AirKorea PM10 forecast animation", "KST", "dust");
+  const pm25 = createPanel("PM2.5", "AirKorea PM2.5 forecast animation", "KST", "dust");
   const dustRow = document.createElement("div");
   dustRow.className = "weather-dust-row";
   dustRow.append(pm10.element, pm25.element);
@@ -246,10 +248,11 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     const pm25Ratio = pm25.aspectRatio ?? 674 / 795;
     dustRow.style.setProperty("--weather-dust-columns",
       `minmax(0, ${pm10Ratio}fr) minmax(0, ${pm25Ratio}fr)`);
-    // The 901-by-757 surface chart repeats its timestamp in the bottom 18 pixels.
-    const chartOverlap = chart.aspectRatio === 901 / 757 ? 18 / 901 : 0;
+    // The 1073-by-802 surface chart repeats its timestamp in the bottom 20 pixels.
+    const chartRatio = chart.aspectRatio ?? 1073 / 802;
+    const chartOverlap = chartRatio === 1073 / 802 ? 20 / 1073 : 0;
     dustRow.style.marginTop = `${-100 * chartOverlap}%`;
-    const weatherRatio = 1 / (1 / (chart.aspectRatio ?? 1) - chartOverlap + 1 / (pm10Ratio + pm25Ratio));
+    const weatherRatio = 1 / (1 / chartRatio - chartOverlap + 1 / (pm10Ratio + pm25Ratio));
     const observationRatio = 1 / (1 / radarRatio + 1 / satelliteRatio);
     panels.style.setProperty("--weather-grid-columns",
       `minmax(0, ${weatherRatio}fr) minmax(0, ${observationRatio}fr)`);
@@ -356,7 +359,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     }
     const results = await Promise.all([
       chart.refresh(() => getUtcFrames(time =>
-        new KmaChartProvider(http, serviceKey).getFrames({ time }))),
+        new KmaChartProvider(http, serviceKey).getFrames({ code: "12", time }))),
       koreaSatellite.refresh(() => getUtcFrames(time =>
         new KmaSatProvider(http, serviceKey).getFrames({ time, area: "ko", data: "rgbdn" }))),
       radar.refresh(() => new KmaRadarProvider(http, serviceKey).getFrames({
