@@ -61,6 +61,19 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
   stage.className = "weather-stage";
   if (imageKind === "dust") stage.classList.add("weather-dust-stage");
   stage.append(empty, image);
+  let timestampImage: HTMLImageElement | undefined;
+  if (imageKind === "chart") {
+    const canvas = document.createElement("div");
+    canvas.className = "weather-chart-canvas";
+    const timestamp = document.createElement("div");
+    timestamp.className = "weather-chart-timestamp";
+    timestamp.setAttribute("aria-hidden", "true");
+    timestampImage = document.createElement("img");
+    timestampImage.alt = "";
+    timestamp.append(timestampImage);
+    canvas.append(image, timestamp);
+    stage.append(canvas);
+  }
   const status = document.createElement("span");
   status.setAttribute("role", "status");
   status.className = "weather-panel-status";
@@ -102,8 +115,9 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
         // AirKorea's 820-square canvas includes margins around the 674-by-795 chart.
         const crop = imageKind === "dust" && frame.naturalWidth === 820 && frame.naturalHeight === 820;
         const chartMask = imageKind === "chart" && frame.naturalWidth === 1073 && frame.naturalHeight === 802;
-        const width = crop ? 674 : frame.naturalWidth;
-        const height = crop ? 795 : frame.naturalHeight;
+        // Keep a four-pixel side margin and the relocated timestamp; omit the repeated footer.
+        const width = crop ? 674 : chartMask ? 1034 : frame.naturalWidth;
+        const height = crop ? 795 : chartMask ? 741 : frame.naturalHeight;
         aspectRatio = width / height;
         return () => {
           if (disposed || request !== requestId) return;
@@ -113,6 +127,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
           image.width = frame.naturalWidth;
           image.height = frame.naturalHeight;
           image.src = frame.src;
+          if (timestampImage && chartMask) timestampImage.src = frame.src;
           empty.hidden = true;
           status.textContent = "";
         };
@@ -248,11 +263,8 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     const pm25Ratio = pm25.aspectRatio ?? 674 / 795;
     dustRow.style.setProperty("--weather-dust-columns",
       `minmax(0, ${pm10Ratio}fr) minmax(0, ${pm25Ratio}fr)`);
-    // The 1073-by-802 surface chart repeats its timestamp in the bottom 20 pixels.
-    const chartRatio = chart.aspectRatio ?? 1073 / 802;
-    const chartOverlap = chartRatio === 1073 / 802 ? 20 / 1073 : 0;
-    dustRow.style.marginTop = `${-100 * chartOverlap}%`;
-    const weatherRatio = 1 / (1 / chartRatio - chartOverlap + 1 / (pm10Ratio + pm25Ratio));
+    const chartRatio = chart.aspectRatio ?? 1034 / 741;
+    const weatherRatio = 1 / (1 / chartRatio + 1 / (pm10Ratio + pm25Ratio));
     const observationRatio = 1 / (1 / radarRatio + 1 / satelliteRatio);
     panels.style.setProperty("--weather-grid-columns",
       `minmax(0, ${weatherRatio}fr) minmax(0, ${observationRatio}fr)`);
