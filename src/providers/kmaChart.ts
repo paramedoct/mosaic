@@ -1,6 +1,9 @@
 import { HttpTransport } from "../transports/http";
 
+export type KmaChartCode = "3" | "12" | "24";
+
 export interface KmaChartRequest {
+  code: KmaChartCode;
   time: Date;
 }
 
@@ -41,7 +44,7 @@ export class KmaChartProvider {
     url.searchParams.set("numOfRows", "1000");
     url.searchParams.set("pageNo", "1");
     url.searchParams.set("dataType", "JSON");
-    url.searchParams.set("code", "3");
+    url.searchParams.set("code", request.code);
     url.searchParams.set("time", request.time.toISOString().slice(0, 10).replaceAll("-", ""));
 
     const response = await this.http.get(url.toString());
