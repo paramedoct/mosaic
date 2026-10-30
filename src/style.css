@@ -73,12 +73,46 @@ main { width: 100%; flex: 1; }
 .weather-panels {
   display: grid;
   grid-template-columns: var(--weather-grid-columns, minmax(0, 2fr) minmax(0, 1fr));
+  column-gap: var(--weather-side-margin, 0px);
   align-items: start;
   width: 100%;
   margin-inline: auto;
+  padding-right: var(--weather-side-margin, 0px);
 }
 .weather-panel { position: relative; min-width: 0; }
 .weather-column { display: flex; flex-direction: column; min-width: 0; }
+.weather-observation-column { position: relative; padding-bottom: var(--weather-bottom-margin, 0px); }
+.weather-satellite-panel { width: calc(100% + var(--weather-side-margin, 0px)); }
+.weather-observation-column:has(.weather-image[src])::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: calc(-1 * var(--weather-side-margin, 0px));
+  width: var(--weather-side-margin, 0px);
+  height: 100%;
+  background: #fff;
+  pointer-events: none;
+}
+.weather-radar-panel:has(.weather-image[src])::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: calc(-1 * var(--weather-side-margin, 0px));
+  width: var(--weather-side-margin, 0px);
+  height: 100%;
+  background: #fff;
+  pointer-events: none;
+}
+.weather-radar-panel:has(.weather-image[src])::after {
+  content: "";
+  position: absolute;
+  bottom: calc(-1 * var(--weather-bottom-margin, 0px));
+  left: calc(-1 * var(--weather-side-margin, 0px));
+  width: calc(100% + 2 * var(--weather-side-margin, 0px));
+  height: var(--weather-bottom-margin, 0px);
+  background: #fff;
+  pointer-events: none;
+}
 .weather-dust-row {
   position: relative;
   z-index: 1;

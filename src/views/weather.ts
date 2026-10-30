@@ -83,10 +83,12 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
   let requestId = 0;
   let disposed = false;
   let aspectRatio: number | undefined;
+  let sourceImageWidth: number | undefined;
 
   return {
     element,
     get aspectRatio(): number | undefined { return aspectRatio; },
+    get imageWidth(): number | undefined { return sourceImageWidth; },
     get times(): number[] { return frames.map(frame => frame.time); },
     async prepare(time: number): Promise<() => void> {
       const request = ++requestId;
@@ -119,6 +121,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
         const width = crop ? 674 : chartMask ? 1034 : frame.naturalWidth;
         const height = crop ? 795 : chartMask ? 741 : frame.naturalHeight;
         aspectRatio = width / height;
+        sourceImageWidth = frame.naturalWidth;
         return () => {
           if (disposed || request !== requestId) return;
           stage.style.aspectRatio = `${width} / ${height}`;
@@ -241,7 +244,9 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
 
   const chart = createPanel("Surface chart", "KMA surface weather chart (UTC, every 3 hours)", "UTC", "chart");
   const koreaSatellite = createPanel("Korea satellite", "KMA Korea satellite imagery", "UTC");
+  koreaSatellite.element.classList.add("weather-satellite-panel");
   const radar = createPanel("Korea radar", "KMA radar imagery", "KST");
+  radar.element.classList.add("weather-radar-panel");
   const pm10 = createPanel("PM10", "AirKorea PM10 forecast animation", "KST", "dust");
   const pm25 = createPanel("PM2.5", "AirKorea PM2.5 forecast animation", "KST", "dust");
   const dustRow = document.createElement("div");
@@ -251,8 +256,8 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   weatherColumn.className = "weather-column";
   weatherColumn.append(chart.element, dustRow);
   const observationColumn = document.createElement("div");
-  observationColumn.className = "weather-column";
-  observationColumn.append(radar.element, koreaSatellite.element);
+  observationColumn.className = "weather-column weather-observation-column";
+  observationColumn.append(koreaSatellite.element, radar.element);
   const panels = document.createElement("div");
   panels.className = "weather-panels";
   panels.append(weatherColumn, observationColumn);
@@ -265,11 +270,21 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
       `minmax(0, ${pm10Ratio}fr) minmax(0, ${pm25Ratio}fr)`);
     const chartRatio = chart.aspectRatio ?? 1034 / 741;
     const weatherRatio = 1 / (1 / chartRatio + 1 / (pm10Ratio + pm25Ratio));
-    const observationRatio = 1 / (1 / radarRatio + 1 / satelliteRatio);
+    // Express margins in source-image pixels so they scale with the radar image.
+    const sourceWidth = radar.imageWidth ?? 900;
+    const sideRatio = 4 / sourceWidth;
+    const bottomRatio = 6 / sourceWidth;
+    const observationRatio = 1 / ((1 + sideRatio) / satelliteRatio + 1 / radarRatio + bottomRatio);
+    const totalRatio = weatherRatio + observationRatio * (1 + 2 * sideRatio);
+    const availableHeight = Math.max(0, window.innerHeight - panels.getBoundingClientRect().top - 8);
+    const maxWidth = availableHeight * totalRatio;
+    const availableWidth = panels.parentElement?.clientWidth ?? panels.clientWidth;
+    const radarWidth = Math.min(availableWidth, maxWidth) * observationRatio / totalRatio;
+    panels.style.setProperty("--weather-side-margin", `${radarWidth * sideRatio}px`);
+    panels.style.setProperty("--weather-bottom-margin", `${radarWidth * bottomRatio}px`);
     panels.style.setProperty("--weather-grid-columns",
       `minmax(0, ${weatherRatio}fr) minmax(0, ${observationRatio}fr)`);
-    const availableHeight = Math.max(0, window.innerHeight - panels.getBoundingClientRect().top - 8);
-    panels.style.maxWidth = `${availableHeight * (weatherRatio + observationRatio)}px`;
+    panels.style.maxWidth = `${maxWidth}px`;
   }
   const toolbar = document.createElement("div");
   toolbar.className = "weather-toolbar";
