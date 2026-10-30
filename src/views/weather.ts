@@ -2,6 +2,7 @@ import { HttpTransport } from "../transports/http";
 import { KmaSatProvider } from "../providers/kmaSat";
 import { KmaRadarProvider } from "../providers/kmaRadar";
 import { KmaChartProvider } from "../providers/kmaChart";
+import { KecoDustProvider } from "../providers/kecoDust";
 
 import { icon, setAction } from "../icons";
 
@@ -25,7 +26,14 @@ function formatKst(time: number): string {
 
 function parseFrames(urls: string[], timeZone: "UTC" | "KST"): Frame[] {
   return urls.flatMap(url => {
-    const match = new URL(url).pathname.match(/(?<!\d)(20\d{8}(?:\d{2})?)(?:\d{2})?(?!\d)/);
+    const pathname = new URL(url).pathname;
+    const forecast = pathname.match(/^\/dustImage\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\//);
+    if (forecast) {
+      const [, year, month, day, hour] = forecast;
+      const time = Date.parse(`${year}-${month}-${day}T${hour}:00:00+09:00`);
+      return Number.isFinite(time) ? [{ url, time }] : [];
+    }
+    const match = pathname.match(/(?<!\d)(20\d{8}(?:\d{2})?)(?:\d{2})?(?!\d)/);
     if (!match) return [];
     const value = match[1];
     const zone = timeZone === "KST" ? "+09:00" : "Z";
@@ -38,7 +46,7 @@ function parseFrames(urls: string[], timeZone: "UTC" | "KST"): Frame[] {
   }).sort((a, b) => a.time - b.time);
 }
 
-function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
+function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", dust = false) {
   const element = document.createElement("section");
   element.className = "weather-panel";
   element.setAttribute("aria-label", title);
@@ -51,6 +59,7 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
   empty.append(icon("satellite"));
   const stage = document.createElement("div");
   stage.className = "weather-stage";
+  if (dust) stage.classList.add("weather-dust-stage");
   stage.append(empty, image);
   const status = document.createElement("span");
   status.setAttribute("role", "status");
@@ -90,10 +99,15 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST") {
           continue;
         }
         if (disposed || request !== requestId) return () => {};
-        aspectRatio = frame.naturalWidth / frame.naturalHeight;
+        // AirKorea's 820-square canvas includes margins around the 674-by-795 chart.
+        const crop = dust && frame.naturalWidth === 820 && frame.naturalHeight === 820;
+        const width = crop ? 674 : frame.naturalWidth;
+        const height = crop ? 795 : frame.naturalHeight;
+        aspectRatio = width / height;
         return () => {
           if (disposed || request !== requestId) return;
-          stage.style.aspectRatio = `${frame.naturalWidth} / ${frame.naturalHeight}`;
+          stage.style.aspectRatio = `${width} / ${height}`;
+          stage.classList.toggle("weather-dust-cropped", crop);
           image.width = frame.naturalWidth;
           image.height = frame.naturalHeight;
           image.src = frame.src;
@@ -211,19 +225,36 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   const chart = createPanel("Surface chart", "KMA surface weather chart (UTC, every 3 hours)", "UTC");
   const koreaSatellite = createPanel("Korea satellite", "KMA Korea satellite imagery", "UTC");
   const radar = createPanel("Korea radar", "KMA radar imagery", "KST");
-  const detail = document.createElement("div");
-  detail.className = "weather-detail";
-  detail.append(radar.element, koreaSatellite.element);
+  const pm10 = createPanel("PM10", "AirKorea PM10 forecast animation", "KST", true);
+  const pm25 = createPanel("PM2.5", "AirKorea PM2.5 forecast animation", "KST", true);
+  const dustRow = document.createElement("div");
+  dustRow.className = "weather-dust-row";
+  dustRow.append(pm10.element, pm25.element);
+  const weatherColumn = document.createElement("div");
+  weatherColumn.className = "weather-column";
+  weatherColumn.append(chart.element, dustRow);
+  const observationColumn = document.createElement("div");
+  observationColumn.className = "weather-column";
+  observationColumn.append(radar.element, koreaSatellite.element);
   const panels = document.createElement("div");
   panels.className = "weather-panels";
-  panels.append(chart.element, detail);
-  const workspace = app.closest<HTMLElement>(".app-workspace");
+  panels.append(weatherColumn, observationColumn);
   function alignImageHeights(): void {
-    if (!chart.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) return;
-    const columnRatio = chart.aspectRatio * (1 / koreaSatellite.aspectRatio + 1 / radar.aspectRatio);
-    panels.style.setProperty("--weather-grid-columns", `minmax(0, ${columnRatio}fr) minmax(0, 1fr)`);
-    workspace?.style.setProperty("--weather-layout-width",
-      `calc(var(--weather-detail-width) * ${1 + columnRatio} + 2 * var(--workspace-padding))`);
+    const radarRatio = radar.aspectRatio ?? 1;
+    const satelliteRatio = koreaSatellite.aspectRatio ?? 1;
+    const pm10Ratio = pm10.aspectRatio ?? 674 / 795;
+    const pm25Ratio = pm25.aspectRatio ?? 674 / 795;
+    dustRow.style.setProperty("--weather-dust-columns",
+      `minmax(0, ${pm10Ratio}fr) minmax(0, ${pm25Ratio}fr)`);
+    // The 901-by-757 surface chart repeats its timestamp in the bottom 18 pixels.
+    const chartOverlap = chart.aspectRatio === 901 / 757 ? 18 / 901 : 0;
+    dustRow.style.marginTop = `${-100 * chartOverlap}%`;
+    const weatherRatio = 1 / (1 / (chart.aspectRatio ?? 1) - chartOverlap + 1 / (pm10Ratio + pm25Ratio));
+    const observationRatio = 1 / (1 / radarRatio + 1 / satelliteRatio);
+    panels.style.setProperty("--weather-grid-columns",
+      `minmax(0, ${weatherRatio}fr) minmax(0, ${observationRatio}fr)`);
+    const availableHeight = Math.max(0, window.innerHeight - panels.getBoundingClientRect().top - 8);
+    panels.style.maxWidth = `${availableHeight * (weatherRatio + observationRatio)}px`;
   }
   const toolbar = document.createElement("div");
   toolbar.className = "weather-toolbar";
@@ -267,6 +298,8 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
       ...(chart.times.length ? [chart.prepare(selectedTime)] : []),
       ...(koreaSatellite.times.length ? [koreaSatellite.prepare(selectedTime)] : []),
       ...(radar.times.length ? [radar.prepare(selectedTime)] : []),
+      ...(pm10.times.length ? [pm10.prepare(selectedTime)] : []),
+      ...(pm25.times.length ? [pm25.prepare(selectedTime)] : []),
     ]);
     if (disposed || request !== showRequest) return;
     alignImageHeights();
@@ -329,10 +362,16 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
       radar.refresh(() => new KmaRadarProvider(http, serviceKey).getFrames({
         time: new Date(date.getTime() + KST_OFFSET),
       })),
+      pm10.refresh(() => new KecoDustProvider(http, serviceKey).getFrames({
+        code: "pm10", time: new Date(dayStart + KST_OFFSET),
+      })),
+      pm25.refresh(() => new KecoDustProvider(http, serviceKey).getFrames({
+        code: "pm25", time: new Date(dayStart + KST_OFFSET),
+      })),
     ]);
     if (disposed) return;
     loadedDay = time.value.slice(0, 10);
-    timeline = [...new Set([...chart.times, ...koreaSatellite.times, ...radar.times])]
+    timeline = [...new Set([...chart.times, ...koreaSatellite.times, ...radar.times, ...pm10.times, ...pm25.times])]
       .filter(value => value % TIME_STEP === 0)
       .filter(value => formatKst(value).slice(0, 10) === loadedDay)
       .sort((a, b) => a - b);
@@ -347,15 +386,24 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   }
   updateNavigation();
 
+  const layoutObserver = new ResizeObserver(alignImageHeights);
+  layoutObserver.observe(tools);
+  layoutObserver.observe(controls);
+  window.addEventListener("resize", alignImageHeights);
+  alignImageHeights();
+
   if (key.value.trim()) void refresh();
 
   return () => {
     disposed = true;
-    workspace?.style.removeProperty("--weather-layout-width");
+    layoutObserver.disconnect();
+    window.removeEventListener("resize", alignImageHeights);
     toolbar.remove();
     chart.dispose();
     koreaSatellite.dispose();
     radar.dispose();
+    pm10.dispose();
+    pm25.dispose();
   };
 }
 
