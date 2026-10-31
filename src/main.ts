@@ -11,8 +11,6 @@ const app = document.querySelector<HTMLDivElement>("#app")!;
 const catalog = document.createElement("nav");
 catalog.className = "view-catalog";
 catalog.setAttribute("aria-label", "Views");
-const header = document.createElement("header");
-header.className = "app-header";
 const sidebar = document.createElement("aside");
 sidebar.className = "app-sidebar";
 const brand = document.createElement("div");
@@ -26,7 +24,7 @@ const workspace = document.createElement("div");
 workspace.className = "app-workspace";
 const tools = document.createElement("div");
 tools.className = "view-tools";
-header.append(tools);
+sidebar.append(tools);
 const container = document.createElement("main");
 let dispose: (() => void) | undefined;
 
@@ -34,9 +32,7 @@ for (const view of Object.values(views)) {
   const card = document.createElement("button");
   card.className = "view-card";
   card.setAttribute("aria-pressed", "false");
-  const label = document.createElement("span");
-  label.textContent = view.title;
-  card.append(icon(view.icon ?? "mosaic"), label);
+  card.append(icon(view.icon ?? "mosaic"));
   card.setAttribute("aria-label", view.title);
   card.title = view.title;
   card.onclick = () => {
@@ -51,6 +47,6 @@ for (const view of Object.values(views)) {
   catalog.append(card);
 }
 
-workspace.append(header, container);
+workspace.append(container);
 app.replaceChildren(sidebar, workspace);
 catalog.querySelector("button")!.click();

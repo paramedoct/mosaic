@@ -14,16 +14,6 @@ interface Frame {
 }
 
 const KST_OFFSET = 9 * 60 * 60_000;
-const TIME_STEP = 10 * 60_000;
-
-function floorTime(time: number): number {
-  return Math.floor(time / TIME_STEP) * TIME_STEP;
-}
-
-function formatKst(time: number): string {
-  return new Date(time + KST_OFFSET).toISOString().slice(0, 16);
-}
-
 function parseFrames(urls: string[], timeZone: "UTC" | "KST"): Frame[] {
   return urls.flatMap(url => {
     const pathname = new URL(url).pathname;
@@ -89,8 +79,8 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
     element,
     get aspectRatio(): number | undefined { return aspectRatio; },
     get imageWidth(): number | undefined { return sourceImageWidth; },
-    get times(): number[] { return frames.map(frame => frame.time); },
-    async prepare(time: number): Promise<() => void> {
+    get hasFrames(): boolean { return frames.length > 0; },
+    async prepare(): Promise<() => void> {
       const request = ++requestId;
       function commitEmpty(message: string): () => void {
         return () => {
@@ -100,9 +90,9 @@ function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageK
           status.textContent = message;
         };
       }
-      const candidates = frames.filter(frame => frame.time <= time).reverse();
+      const candidates = frames.filter(frame => frame.time <= Date.now()).reverse();
       if (candidates.length === 0) {
-        return commitEmpty("No imagery at this time");
+        return commitEmpty("No imagery available");
       }
       for (const selected of candidates) {
         const frame = new Image();
@@ -218,29 +208,62 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     key.focus();
   };
 
-  key.onkeydown = (event) => {
-    if (event.key === "Enter") void refresh();
-  };
-
-  const controls = document.createElement("div");
+  const dialog = document.createElement("dialog");
+  dialog.className = "weather-settings-dialog";
+  dialog.id = "weather-key-settings";
+  dialog.setAttribute("aria-labelledby", "weather-key-settings-title");
+  const heading = document.createElement("h2");
+  heading.id = "weather-key-settings-title";
+  heading.textContent = "API key settings";
+  const close = document.createElement("button");
+  close.type = "button";
+  setAction(close, "close", "Close settings");
+  close.onclick = () => setSettingsOpen(false);
+  const dialogHeader = document.createElement("div");
+  dialogHeader.className = "weather-settings-header";
+  dialogHeader.append(heading, close);
+  const controls = document.createElement("form");
   controls.className = "weather-controls";
-  controls.append(key, rememberLabel, forget);
-  const settings = document.createElement("div");
-  settings.className = "weather-settings";
+  forget.type = "button";
+  const load = document.createElement("button");
+  load.type = "submit";
+  load.className = "primary-button";
+  load.textContent = "Load imagery";
+  controls.onsubmit = event => {
+    event.preventDefault();
+    if (remember.checked) saveKey();
+    void refresh();
+  };
+  const keyActions = document.createElement("div");
+  keyActions.className = "weather-key-actions";
+  keyActions.append(rememberLabel, forget);
+  controls.append(key, keyActions, status, load);
+  dialog.append(dialogHeader, controls);
   const settingsToggle = document.createElement("button");
-  setAction(settingsToggle, "key", "API key");
-  controls.id = "weather-key-settings";
-  settingsToggle.setAttribute("aria-controls", controls.id);
+  settingsToggle.className = "weather-settings-toggle";
+  setAction(settingsToggle, "lock", "API key settings");
+  settingsToggle.setAttribute("aria-controls", dialog.id);
+  settingsToggle.setAttribute("aria-haspopup", "dialog");
+  settingsToggle.setAttribute("aria-expanded", "false");
   function setSettingsOpen(open: boolean): void {
-    controls.hidden = !open;
+    if (open && !dialog.open) {
+      dialog.showModal();
+      key.focus();
+    } else if (!open && dialog.open) {
+      dialog.close();
+    }
     settingsToggle.setAttribute("aria-expanded", String(open));
   }
-  settingsToggle.onclick = () => {
-    setSettingsOpen(controls.hidden === true);
-    if (!controls.hidden) key.focus();
+  dialog.onclose = () => settingsToggle.setAttribute("aria-expanded", "false");
+  dialog.onclick = event => {
+    if (event.target !== dialog) return;
+    const bounds = dialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+        event.clientY < bounds.top || event.clientY > bounds.bottom) {
+      setSettingsOpen(false);
+    }
   };
-  setSettingsOpen(!key.value.trim());
-  settings.append(settingsToggle);
+  settingsToggle.onclick = () => setSettingsOpen(!dialog.open);
 
   const chart = createPanel("Surface chart", "KMA surface weather chart (UTC, every 3 hours)", "UTC", "chart");
   const koreaSatellite = createPanel("Korea satellite", "KMA Korea satellite imagery", "UTC");
@@ -288,93 +311,24 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
   }
   const toolbar = document.createElement("div");
   toolbar.className = "weather-toolbar";
-  const actions = document.createElement("div");
-  actions.className = "weather-actions";
-  const time = document.createElement("input");
-  time.type = "datetime-local";
-  time.step = "600";
-  time.setAttribute("aria-label", "Imagery date and time (KST)");
-  const timeLabel = document.createElement("label");
-  timeLabel.className = "weather-time";
-  timeLabel.append(time, "KST");
-  time.value = formatKst(floorTime(Date.now()));
-  const previous = document.createElement("button");
-  setAction(previous, "previous", "Previous observation time");
-  const next = document.createElement("button");
-  setAction(next, "next", "Next observation time");
-  const now = document.createElement("button");
-  setAction(now, "now", "Go to current time");
-  actions.append(previous, timeLabel, next, now, settings);
-  toolbar.append(status, actions);
+  toolbar.append(settingsToggle);
   const view = document.createElement("section");
   view.className = "weather-view";
   tools.append(toolbar);
-  view.append(controls, panels);
+  view.append(dialog, panels);
   app.replaceChildren(view);
+  setSettingsOpen(!key.value.trim());
   let disposed = false;
-  let showRequest = 0;
   let loading = false;
-  let timeline: number[] = [];
-  let loadedDay = "";
-  let selectedTime = new Date(time.value + "+09:00").getTime();
-  function updateNavigation(): void {
-    previous.disabled = loading || !timeline.some(value => value < selectedTime);
-    next.disabled = loading || !timeline.some(value => value > selectedTime);
-  }
-  async function show(): Promise<void> {
-    const request = ++showRequest;
-    updateNavigation();
-    const commits = await Promise.all([
-      ...(chart.times.length ? [chart.prepare(selectedTime)] : []),
-      ...(koreaSatellite.times.length ? [koreaSatellite.prepare(selectedTime)] : []),
-      ...(radar.times.length ? [radar.prepare(selectedTime)] : []),
-      ...(pm10.times.length ? [pm10.prepare(selectedTime)] : []),
-      ...(pm25.times.length ? [pm25.prepare(selectedTime)] : []),
-    ]);
-    if (disposed || request !== showRequest) return;
-    alignImageHeights();
-    commits.forEach(commit => commit());
-  }
-  function select(value: number): void {
-    selectedTime = value;
-    time.value = formatKst(value);
-    void show();
-  }
-  previous.onclick = () => {
-    const value = timeline.filter(value => value < selectedTime).at(-1);
-    if (value !== undefined) select(value);
-  };
-  next.onclick = () => {
-    const value = timeline.find(value => value > selectedTime);
-    if (value !== undefined) select(value);
-  };
-  time.onchange = () => {
-    if (!time.value) return;
-    selectedTime = floorTime(new Date(time.value + "+09:00").getTime());
-    if (!Number.isFinite(selectedTime)) return;
-    time.value = formatKst(selectedTime);
-    if (time.value.slice(0, 10) !== loadedDay) void refresh();
-    else void show();
-  };
-  now.onclick = () => {
-    time.value = formatKst(floorTime(Date.now()));
-    void refresh();
-  };
   async function refresh(): Promise<void> {
-    if (loading || !time.value || !time.validity.valid) return;
+    if (loading) return;
     loading = true;
-    if (!chart.aspectRatio || !koreaSatellite.aspectRatio || !radar.aspectRatio) {
-      toolbar.style.visibility = "hidden";
-    }
-    ++showRequest;
-    time.disabled = true;
-    now.disabled = true;
-    updateNavigation();
+    load.disabled = true;
     const http = new HttpTransport();
     const serviceKey = key.value.trim();
-    const date = new Date(time.value + "+09:00");
-    const dayStart = new Date(time.value.slice(0, 10) + "T00:00:00+09:00").getTime();
-    selectedTime = date.getTime();
+    const date = new Date();
+    const kstDate = new Date(date.getTime() + KST_OFFSET).toISOString().slice(0, 10);
+    const dayStart = new Date(kstDate + "T00:00:00+09:00").getTime();
     async function getUtcFrames(getFrames: (time: Date) => Promise<string[]>): Promise<string[]> {
       const days = [dayStart, dayStart + 24 * 60 * 60_000 - 1];
       const results = await Promise.allSettled(days.map(value => getFrames(new Date(value))));
@@ -400,25 +354,21 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
       })),
     ]);
     if (disposed) return;
-    loadedDay = time.value.slice(0, 10);
-    timeline = [...new Set([...chart.times, ...koreaSatellite.times, ...radar.times, ...pm10.times, ...pm25.times])]
-      .filter(value => value % TIME_STEP === 0)
-      .filter(value => formatKst(value).slice(0, 10) === loadedDay)
-      .sort((a, b) => a - b);
     if (results.some(Boolean)) setSettingsOpen(false);
-    await show();
+    const commits = await Promise.all(
+      [chart, koreaSatellite, radar, pm10, pm25]
+        .filter(panel => panel.hasFrames)
+        .map(panel => panel.prepare())
+    );
     if (disposed) return;
+    alignImageHeights();
+    commits.forEach(commit => commit());
     loading = false;
-    time.disabled = false;
-    now.disabled = false;
-    toolbar.style.removeProperty("visibility");
-    updateNavigation();
+    load.disabled = false;
   }
-  updateNavigation();
 
   const layoutObserver = new ResizeObserver(alignImageHeights);
   layoutObserver.observe(tools);
-  layoutObserver.observe(controls);
   window.addEventListener("resize", alignImageHeights);
   alignImageHeights();
 
@@ -426,6 +376,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
 
   return () => {
     disposed = true;
+    dialog.close();
     layoutObserver.disconnect();
     window.removeEventListener("resize", alignImageHeights);
     toolbar.remove();
