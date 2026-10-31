@@ -1,9 +1,26 @@
+export type TimeZone = "UTC" | "KST";
+
+const KST_OFFSET = 9 * 60 * 60_000;
+const DAY = 24 * 60 * 60_000;
+
+export function getQueryDates(now: Date, timeZone: TimeZone): { currentDates: Date[]; previousDate: Date } {
+  const kstDate = new Date(now.getTime() + KST_OFFSET).toISOString().slice(0, 10);
+  const dayStart = Date.parse(`${kstDate}T00:00:00+09:00`);
+  const currentDates = timeZone === "UTC"
+    ? [new Date(dayStart), new Date(dayStart + DAY - 1)]
+    : [new Date(dayStart + KST_OFFSET)];
+  return {
+    currentDates,
+    previousDate: new Date(dayStart - DAY + (timeZone === "KST" ? KST_OFFSET : 0)),
+  };
+}
+
 export interface Frame {
   url: string;
   time: number;
 }
 
-export function parseFrames(urls: string[], timeZone: "UTC" | "KST"): Frame[] {
+export function parseFrames(urls: string[], timeZone: TimeZone): Frame[] {
   return urls.flatMap(url => {
     const pathname = new URL(url).pathname;
     const forecast = pathname.match(/^\/dustImage\/(\d{4})\/(\d{2})\/(\d{2})\/(\d{2})\//);

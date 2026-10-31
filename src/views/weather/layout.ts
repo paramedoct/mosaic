@@ -45,5 +45,6 @@ export function createWeatherLayout() {
       `minmax(0, ${weatherRatio}fr) minmax(0, ${observationRatio}fr)`);
     panels.style.maxWidth = `${maxWidth}px`;
   }
-  return { panels, chart, koreaSatellite, radar, pm10, pm25, alignImageHeights };
+  const allPanels = [chart, koreaSatellite, radar, pm10, pm25];
+  return { panels, chart, koreaSatellite, radar, pm10, pm25, allPanels, alignImageHeights };
 }

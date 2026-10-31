@@ -10,12 +10,9 @@ import { getFramesWithFallback } from "./weather/fallback";
 
 import type { View } from "../types";
 
-const KST_OFFSET = 9 * 60 * 60_000;
-const DAY = 24 * 60 * 60_000;
-
 function mount(app: HTMLElement, tools: HTMLElement): () => void {
   const settings = createWeatherSettings(() => { void refresh(); });
-  const { panels, chart, koreaSatellite, radar, pm10, pm25, alignImageHeights } = createWeatherLayout();
+  const { panels, chart, koreaSatellite, radar, pm10, pm25, allPanels, alignImageHeights } = createWeatherLayout();
   const toolbar = document.createElement("div");
   toolbar.className = "weather-toolbar";
   toolbar.append(settings.toggle);
@@ -34,34 +31,25 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     const http = new HttpTransport();
     const serviceKey = settings.getKey();
     const date = new Date();
-    const kstDate = new Date(date.getTime() + KST_OFFSET).toISOString().slice(0, 10);
-    const dayStart = new Date(kstDate + "T00:00:00+09:00").getTime();
-    const utcDates = [new Date(dayStart), new Date(dayStart + DAY - 1)];
-    const previousUtcDate = new Date(dayStart - DAY);
-    const kstDateForQuery = new Date(dayStart + KST_OFFSET);
-    const previousKstDate = new Date(dayStart - DAY + KST_OFFSET);
-    const results = await Promise.all([
-      chart.refresh(() => getFramesWithFallback(time =>
-        new KmaChartProvider(http, serviceKey).getFrames({ code: "12", time }),
-        utcDates, previousUtcDate, "UTC", date.getTime())),
-      koreaSatellite.refresh(() => getFramesWithFallback(time =>
-        new KmaSatProvider(http, serviceKey).getFrames({ time, area: "ko", data: "rgbdn" }),
-        utcDates, previousUtcDate, "UTC", date.getTime())),
-      radar.refresh(() => getFramesWithFallback(time =>
-        new KmaRadarProvider(http, serviceKey).getFrames({ time }),
-        [kstDateForQuery], previousKstDate, "KST", date.getTime())),
-      pm10.refresh(() => getFramesWithFallback(time =>
-        new KecoDustProvider(http, serviceKey).getFrames({ code: "pm10", time }),
-        [kstDateForQuery], previousKstDate, "KST", date.getTime())),
-      pm25.refresh(() => getFramesWithFallback(time =>
-        new KecoDustProvider(http, serviceKey).getFrames({ code: "pm25", time }),
-        [kstDateForQuery], previousKstDate, "KST", date.getTime())),
-    ]);
+    const sources = [
+      { panel: chart, timeZone: "UTC", getFrames: (time: Date) =>
+        new KmaChartProvider(http, serviceKey).getFrames({ code: "12", time }) },
+      { panel: koreaSatellite, timeZone: "UTC", getFrames: (time: Date) =>
+        new KmaSatProvider(http, serviceKey).getFrames({ time, area: "ko", data: "rgbdn" }) },
+      { panel: radar, timeZone: "KST", getFrames: (time: Date) =>
+        new KmaRadarProvider(http, serviceKey).getFrames({ time }) },
+      { panel: pm10, timeZone: "KST", getFrames: (time: Date) =>
+        new KecoDustProvider(http, serviceKey).getFrames({ code: "pm10", time }) },
+      { panel: pm25, timeZone: "KST", getFrames: (time: Date) =>
+        new KecoDustProvider(http, serviceKey).getFrames({ code: "pm25", time }) },
+    ] as const;
+    const results = await Promise.all(sources.map(({ panel, timeZone, getFrames }) =>
+      panel.refresh(() => getFramesWithFallback(getFrames, timeZone, date.getTime()))
+    ));
     if (disposed) return;
     if (results.some(Boolean)) settings.close();
     const commits = await Promise.all(
-      [chart, koreaSatellite, radar, pm10, pm25]
-        .filter(panel => panel.hasFrames)
+      allPanels.filter(panel => panel.hasFrames)
         .map(panel => panel.prepare())
     );
     if (disposed) return;
@@ -84,11 +72,7 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     layoutObserver.disconnect();
     window.removeEventListener("resize", alignImageHeights);
     toolbar.remove();
-    chart.dispose();
-    koreaSatellite.dispose();
-    radar.dispose();
-    pm10.dispose();
-    pm25.dispose();
+    allPanels.forEach(panel => panel.dispose());
   };
 }
 

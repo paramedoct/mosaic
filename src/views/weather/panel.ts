@@ -1,6 +1,6 @@
 import { icon } from "../../icons";
-import { parseFrames } from "./frames";
-import type { Frame } from "./frames";
+import { parseFrames } from "./time";
+import type { Frame } from "./time";
 
 export function createPanel(title: string, alt: string, timeZone: "UTC" | "KST", imageKind?: "dust" | "chart") {
   const element = document.createElement("section");
@@ -41,6 +41,12 @@ export function createPanel(title: string, alt: string, timeZone: "UTC" | "KST",
   let aspectRatio: number | undefined;
   let sourceImageWidth: number | undefined;
 
+  function showEmpty(message: string): void {
+    image.removeAttribute("src");
+    empty.hidden = false;
+    status.textContent = message;
+  }
+
   return {
     element,
     get aspectRatio(): number | undefined { return aspectRatio; },
@@ -51,9 +57,7 @@ export function createPanel(title: string, alt: string, timeZone: "UTC" | "KST",
       function commitEmpty(message: string): () => void {
         return () => {
           if (disposed || request !== requestId) return;
-          image.removeAttribute("src");
-          empty.hidden = false;
-          status.textContent = message;
+          showEmpty(message);
         };
       }
       const candidates = frames.filter(frame => frame.time <= Date.now()).reverse();
@@ -101,18 +105,11 @@ export function createPanel(title: string, alt: string, timeZone: "UTC" | "KST",
         const urls = await getFrames();
         if (disposed) return false;
         frames = parseFrames(urls, timeZone);
-        if (frames.length === 0) {
-          image.removeAttribute("src");
-          empty.hidden = false;
-        }
-        status.textContent = frames.length ? "" : "No dated imagery available";
+        if (frames.length === 0) showEmpty("No dated imagery available");
+        else status.textContent = "";
         return frames.length > 0;
       } catch {
-        if (!disposed) {
-          image.removeAttribute("src");
-          empty.hidden = false;
-          status.textContent = "Load failed";
-        }
+        if (!disposed) showEmpty("Load failed");
         return false;
       }
     },
