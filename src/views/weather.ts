@@ -6,10 +6,12 @@ import { KecoDustProvider } from "../providers/kecoDust";
 
 import { createWeatherLayout } from "./weather/layout";
 import { createWeatherSettings } from "./weather/settings";
+import { getFramesWithFallback } from "./weather/fallback";
 
 import type { View } from "../types";
 
 const KST_OFFSET = 9 * 60 * 60_000;
+const DAY = 24 * 60 * 60_000;
 
 function mount(app: HTMLElement, tools: HTMLElement): () => void {
   const settings = createWeatherSettings(() => { void refresh(); });
@@ -34,29 +36,26 @@ function mount(app: HTMLElement, tools: HTMLElement): () => void {
     const date = new Date();
     const kstDate = new Date(date.getTime() + KST_OFFSET).toISOString().slice(0, 10);
     const dayStart = new Date(kstDate + "T00:00:00+09:00").getTime();
-    async function getUtcFrames(getFrames: (time: Date) => Promise<string[]>): Promise<string[]> {
-      const days = [dayStart, dayStart + 24 * 60 * 60_000 - 1];
-      const results = await Promise.allSettled(days.map(value => getFrames(new Date(value))));
-      const frames = results.flatMap(result => result.status === "fulfilled" ? result.value : []);
-      if (results.every(result => result.status === "rejected")) {
-        throw new Error("Weather imagery unavailable");
-      }
-      return [...new Set(frames)];
-    }
+    const utcDates = [new Date(dayStart), new Date(dayStart + DAY - 1)];
+    const previousUtcDate = new Date(dayStart - DAY);
+    const kstDateForQuery = new Date(dayStart + KST_OFFSET);
+    const previousKstDate = new Date(dayStart - DAY + KST_OFFSET);
     const results = await Promise.all([
-      chart.refresh(() => getUtcFrames(time =>
-        new KmaChartProvider(http, serviceKey).getFrames({ code: "12", time }))),
-      koreaSatellite.refresh(() => getUtcFrames(time =>
-        new KmaSatProvider(http, serviceKey).getFrames({ time, area: "ko", data: "rgbdn" }))),
-      radar.refresh(() => new KmaRadarProvider(http, serviceKey).getFrames({
-        time: new Date(date.getTime() + KST_OFFSET),
-      })),
-      pm10.refresh(() => new KecoDustProvider(http, serviceKey).getFrames({
-        code: "pm10", time: new Date(dayStart + KST_OFFSET),
-      })),
-      pm25.refresh(() => new KecoDustProvider(http, serviceKey).getFrames({
-        code: "pm25", time: new Date(dayStart + KST_OFFSET),
-      })),
+      chart.refresh(() => getFramesWithFallback(time =>
+        new KmaChartProvider(http, serviceKey).getFrames({ code: "12", time }),
+        utcDates, previousUtcDate, "UTC", date.getTime())),
+      koreaSatellite.refresh(() => getFramesWithFallback(time =>
+        new KmaSatProvider(http, serviceKey).getFrames({ time, area: "ko", data: "rgbdn" }),
+        utcDates, previousUtcDate, "UTC", date.getTime())),
+      radar.refresh(() => getFramesWithFallback(time =>
+        new KmaRadarProvider(http, serviceKey).getFrames({ time }),
+        [kstDateForQuery], previousKstDate, "KST", date.getTime())),
+      pm10.refresh(() => getFramesWithFallback(time =>
+        new KecoDustProvider(http, serviceKey).getFrames({ code: "pm10", time }),
+        [kstDateForQuery], previousKstDate, "KST", date.getTime())),
+      pm25.refresh(() => getFramesWithFallback(time =>
+        new KecoDustProvider(http, serviceKey).getFrames({ code: "pm25", time }),
+        [kstDateForQuery], previousKstDate, "KST", date.getTime())),
     ]);
     if (disposed) return;
     if (results.some(Boolean)) settings.close();
