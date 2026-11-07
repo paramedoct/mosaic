@@ -1,0 +1,189 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: loupe
+Upstream-Contact: Christopher Davis <christopherdavis@gnome.org>
+                  Sophie Herold <sophieherold@gnome.org>
+Source: https://gitlab.gnome.org/GNOME/loupe
+
+Files: *
+Copyright: 2020-2023 The Loupe Team
+License: GPL-3+
+
+Files:  src/decoder/formats/glycin_proxy.rs
+	src/decoder/formats/svg.rs
+	src/util/gettext.rs
+	src/widgets/print.rs
+	src/widgets/print_preview.rs
+Copyright: 2023 Sophie Herold <sophieherold@gnome.org>
+License: GPL-3+
+
+Files:  src/main.rs
+Copyright: 2020-2023 Christopher Davis <christopherdavis@gnome.org>
+	   2022-2023 Sophie Herold <sophieherold@gnome.org>
+License: GPL-3+
+
+Files: src/widgets/image_page.rs
+       src/widgets/properties_view.rs
+Copyright: 2022-2023 Christopher Davis <christopherdavis@gnome.org>
+           2022-2023 Sophie Herold <sophieherold@gnome.org>
+License: GPL-3+
+
+Files:  src/decoder/tiling.rs
+	src/widgets/drag_overlay.rs
+Copyright: 2023 Sophie Herold <sophieherold@gnome.org>
+	   2023 FineFindus
+License: GPL-3+
+
+Files: src/about.rs
+Copyright: 2023 Christopher Davis <christopherdavis@gnome.org>
+           2023 Sophie Herold <sophieherold@gnome.org>
+License: GPL-3+
+
+Files: src/widgets/image_view.rs
+Copyright: 2020-2023 Christopher Davis <christopherdavis@gnome.org>
+           2022 Elton A Rodrigues
+           2022 Maximiliano Sandoval R
+           2022-2023 Sophie Herold <sophieherold@gnome.org>
+           2023 FineFindus
+           2023 Huan Nguyen
+           2023 Philipp Kiemle
+License: GPL-3+
+
+Files: src/widgets/window.rs
+Copyright: 2020-2023 Christopher Davis <christopherdavis@gnome.org>
+           2022 Elton A Rodrigues
+           2022 Maximiliano Sandoval R
+           2022-2023 Sophie Herold <sophieherold@gnome.org>
+           2023 FineFindus
+           2023 Huan Thieu Nguyen
+           2023 Lubosz Sarnecki
+           2023 Sabri Ünal
+           2023 qwel
+License: GPL-3+
+
+Files: src/file_model.rs
+Copyright: 2022-2023 Christopher Davis <christopherdavis@gnome.org>
+           2022-2023 Sophie Herold <sophieherold@gnome.org>
+           2023 Gage Berz
+License: GPL-3+
+
+Files: src/application.rs
+Copyright: 2020-2023 Christopher Davis <christopherdavis@gnome.org>
+           2022-2023 Sabri Ünal
+           2022-2023 Sophie Herold <sophieherold@gnome.org>
+           2023 Huan Nguyen
+License: GPL-3+
+
+Files: src/widgets/image.rs
+Copyright: 2021-2023 Christopher Davis <christopherdavis@gnome.org>
+           2022 Maximiliano Sandoval R
+           2022-2023 Sophie Herold <sophieherold@gnome.org>
+           2023 Lubosz Sarnecki
+License: GPL-3+
+
+Files: src/widgets/sliding_view.rs
+Copyright: 2023 Christopher Davis <christopherdavis@gnome.org>
+           2023 Lubosz Sarnecki
+           2023 Sophie Herold <sophieherold@gnome.org>
+License: GPL-3+
+
+Files: data/org.gnome.Loupe.metainfo.xml.in.in
+Copyright: 2023 The Loupe Team
+License: CC0-1.0
+
+Files: data/icons/org.gnome.Loupe.Source.svg
+Copyright: GNOME Design Team
+License: CC-BY-SA-4.0
+
+Files: debian/*
+Copyright: 2023 Matthias Geiger <werdahias@debian.org>
+License: GPL-3+
+
+License: GPL-3+
+ This package is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 3 of the License, or
+ (at your option) any later version.
+ .
+ This package is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program. If not, see <https://www.gnu.org/licenses/>
+ .
+ On Debian systems, the complete text of the GNU General
+ Public License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+
+License: CC0-1.0
+ To the extent possible under law, the author(s) have dedicated all
+ copyright and related and neighboring rights to this software to the
+ public domain worldwide. This software is distributed without any
+ warranty.
+ .
+ You should have received a copy of the CC0 Public Domain Dedication
+ along with this software. If not, see
+ <https://creativecommons.org/publicdomain/zero/1.0/>.
+ .
+ On Debian systems, the complete text of the CC0 Public Domain
+ Dedication can be found in `/usr/share/common-licenses/CC0-1.0’.
+
+License: CC-BY-SA-4.0
+ Attribution-ShareAlike 4.0 International
+ .
+ =======================================================================
+ .
+ Creative Commons Corporation ("Creative Commons") is not a law firm and
+ does not provide legal services or legal advice. Distribution of
+ Creative Commons public licenses does not create a lawyer-client or
+ other relationship. Creative Commons makes its licenses and related
+ information available on an "as-is" basis. Creative Commons gives no
+ warranties regarding its licenses, any material licensed under their
+ terms and conditions, or any related information. Creative Commons
+ disclaims all liability for damages resulting from their use to the
+ fullest extent possible.
+ .
+ Using Creative Commons Public Licenses
+ .
+ Creative Commons public licenses provide a standard set of terms and
+ conditions that creators and other rights holders may use to share
+ original works of authorship and other material subject to copyright
+ and certain other rights specified in the public license below. The
+ following considerations are for informational purposes only, are not
+ exhaustive, and do not form part of our licenses.
+ .
+     Considerations for licensors: Our public licenses are
+     intended for use by those authorized to give the public
+     permission to use material in ways otherwise restricted by
+     copyright and certain other rights. Our licenses are
+     irrevocable. Licensors should read and understand the terms
+     and conditions of the license they choose before applying it.
+     Licensors should also secure all rights necessary before
+     applying our licenses so that the public can reuse the
+     material as expected. Licensors should clearly mark any
+     material not subject to the license. This includes other CC-
+     licensed material, or material used under an exception or
+     limitation to copyright. More considerations for licensors:
+    wiki.creativecommons.org/Considerations_for_licensors
+ .
+     Considerations for the public: By using one of our public
+     licenses, a licensor grants the public permission to use the
+     licensed material under specified terms and conditions. If
+     the licensor's permission is not necessary for any reason--for
+     example, because of any applicable exception or limitation to
+     copyright--then that use is not regulated by the license. Our
+     licenses grant only permissions under copyright and certain
+     other rights that a licensor has authority to grant. Use of
+     the licensed material may still be restricted for other
+     reasons, including because others have copyright or other
+     rights in the material. A licensor may make special requests,
+     such as asking that all changes be marked or described.
+     Although not required by our licenses, you are encouraged to
+     respect those requests where reasonable. More considerations
+     for the public:
+    wiki.creativecommons.org/Considerations_for_licensees
+
+
+
+
+

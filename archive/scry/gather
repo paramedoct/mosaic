@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GATHER_TEMPORARY=
+
+usage() {
+  echo "$0 <subject>:<source> <url...>" >&2
+  exit 1
+}
+
+# shellcheck source=/dev/null
+source "$ROOT_DIR/utils/source.sh"
+source_modules \
+  utils/database.sh \
+  utils/image.sh \
+  utils/location.sh
+
+gather_cleanup() {
+  if [ -n "$GATHER_TEMPORARY" ]; then
+    rm -f -- "$GATHER_TEMPORARY"
+    GATHER_TEMPORARY=
+  fi
+}
+
+gather_add_file() {
+  local subject
+  local source
+  local input
+  local mime
+  local status
+  subject=$1
+  source=$2
+  input=$3
+  if [ ! -f "$input" ] || [ ! -r "$input" ]; then
+    echo "input is not a readable file: $input" >&2
+    return 1
+  fi
+  mime=$(file -b --mime-type -- "$input")
+  case "$mime" in
+    application/zip | application/x-zip | application/x-zip-compressed)
+      image_archive_add "$subject" "$source" "$input" || status=$?
+      ;;
+    *)
+      image_add "$subject" "$source" "$input" || status=$?
+      ;;
+  esac
+  [ "${status:-0}" -eq 2 ] || return "${status:-0}"
+}
+
+gather_add_url() {
+  local subject
+  local source
+  local url
+  local status
+  subject=$1
+  source=$2
+  url=$3
+  GATHER_TEMPORARY=$(mktemp "${TMPDIR:-/tmp}/scry-gather.XXXXXX")
+  if ! curl \
+    --fail \
+    --location \
+    --silent \
+    --show-error \
+    --globoff \
+    --proto '=http,https' \
+    --proto-redir '=http,https' \
+    --connect-timeout 10 \
+    --max-time 120 \
+    --retry 3 \
+    --output "$GATHER_TEMPORARY" \
+    --url "$url"; then
+    echo "download failed: $url" >&2
+    gather_cleanup
+    return 1
+  fi
+  gather_add_file "$subject" "$source" "$GATHER_TEMPORARY" || status=$?
+  gather_cleanup
+  return "${status:-0}"
+}
+
+main() {
+  local location
+  local subject
+  local source
+  local input
+  [ "$#" -ge 2 ] || usage
+  source_require_command curl || return 1
+  location=$1
+  shift
+  trap gather_cleanup EXIT
+  database_prepare
+  IFS=: read -r subject source \
+    < <(location_parse "$location" add)
+  for input in "$@"; do
+    gather_add_url "$subject" "$source" "$input"
+  done
+}
+
+main "$@"
