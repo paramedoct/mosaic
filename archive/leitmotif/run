@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() {
+  echo "$0 <abc/file:Xnum>" >&2
+  exit 1
+}
+
+# shellcheck source=/dev/null
+source "$ROOT_DIR/utils/source.sh"
+source_modules \
+  utils/abc.sh
+
+main() {
+  local reference file
+  [ "$#" -eq 1 ] || usage
+  reference=$1
+  abc_name=
+  abc_number=
+  abc_parse_reference "$reference"
+  file=$(abc_file "$abc_name")
+  tmp=$(mktemp --suffix=.mid)
+  trap 'rm -f "$tmp"' EXIT
+
+  abc_extract_tune "$file" "$abc_number" |
+    abc2midi - -o "$tmp" &&
+    timidity -c /etc/timidity/fluidr3_gm.cfg \
+      --no-realtime-load -S 16M \
+      -Ow -o - "$tmp" 2>/dev/null |
+    paplay
+}
+
+main "$@"
