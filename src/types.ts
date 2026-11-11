@@ -1,7 +1,7 @@
 import type { IconName } from "./icons";
 
-export interface Provider<T> {
-  fetch(): Promise<T>;
+export interface Provider<Query, Result> {
+  fetch(query: Query): Promise<Result>;
 }
 
 export interface Viewer<T> {
