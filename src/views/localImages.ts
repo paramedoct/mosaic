@@ -1,12 +1,15 @@
 import type { View } from "../types";
 import { LocalImagesProvider, type ImageSummary } from "../providers/localImages";
 import { FileTransport } from "../transports/file";
-import { chooseDirectory, type FileConnection } from "../files/connection";
+import { chooseDirectory, hasReadAccess, isSharedFileDocument, requestReadAccess, type FileConnection } from "../files/connection";
+import { standaloneHtml } from "../files/standalone";
+import { ConnectionStore } from "../storage/connections";
 import { loadSqlite } from "../sqlite/engine";
 import { button, download, element, errorMessage, input, options, select } from "./library/ui";
 import "./library/style.css";
 
 const files = new FileTransport();
+const connections = new ConnectionStore();
 
 function bytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -21,6 +24,7 @@ function mount(container: HTMLElement): () => void {
   let viewerRequest = 0;
   let provider: LocalImagesProvider | undefined;
   let source: FileConnection | undefined;
+  let savedConnection: FileSystemDirectoryHandle | undefined;
   let images: readonly ImageSummary[] = [];
   let activeId: string | undefined;
   let viewerUrl: string | undefined;
@@ -32,6 +36,20 @@ function mount(container: HTMLElement): () => void {
   heading.append(element("p", "library-eyebrow", "LOCAL IMAGE LIBRARY"), element("h1", "", "Local Images"),
     element("p", "library-description", "Explore your original images, right where they live."));
   const actions = element("div", "library-actions");
+  const connect = button("Remember folder connection", () => { void run(async () => {
+    if (source?.root.kind !== "directory") return;
+    const root = source.root.handle;
+    try {
+      await connections.save(root);
+      if (disposed) return;
+      savedConnection = root;
+      reconnect.hidden = forget.hidden = false;
+      status.textContent = "Folder connection remembered. Original files stay on disk.";
+    } catch (error) {
+      if (!disposed) status.textContent = `Folder connected for this session, but its connection was not saved. ${errorMessage(error)}`;
+    }
+  }); });
+  connect.disabled = true;
   const sessionPicker = input("Open image folder for this session", "file");
   sessionPicker.webkitdirectory = true;
   sessionPicker.multiple = true;
@@ -47,19 +65,19 @@ function mount(container: HTMLElement): () => void {
     });
   };
   const openSession = button("Connect image folder", () => {
-    if (!window.showDirectoryPicker) { sessionPicker.click(); return; }
+    if (isSharedFileDocument() || !window.showDirectoryPicker) { sessionPicker.click(); return; }
     void run(async () => {
       const root = await chooseDirectory();
       if (!disposed) await useSource({ name: root.name, root: { kind: "directory", handle: root } });
     });
   }, "primary-button");
   const sessionFallback = button("Open folder for this session", () => sessionPicker.click());
-  sessionFallback.hidden = !window.showDirectoryPicker;
+  sessionFallback.hidden = !window.showDirectoryPicker || isSharedFileDocument();
   const reload = button("Reload library", () => {
     if (source) void run(() => useSource(source!));
   });
   reload.disabled = true;
-  actions.append(openSession, sessionFallback, reload, sessionPicker);
+  actions.append(openSession, connect, sessionFallback, reload, sessionPicker);
   header.append(heading, actions);
   const connection = element("section", "local-images-connection");
   const connectionText = element("div");
@@ -67,9 +85,29 @@ function mount(container: HTMLElement): () => void {
   const connectionName = element("strong", "", "No library connected");
   const description = element("p", "library-hint", "Connect the image library root containing images/ and states/db. Session connections need folder selection again after reopening.");
   connectionText.append(mode, connectionName, description);
-  connection.append(connectionText);
+  const connectionActions = element("div", "library-actions");
+  const reconnect = button("Reconnect saved folder", () => { void run(async () => {
+    const root = savedConnection;
+    if (!root) return;
+    if (!await requestReadAccess(root)) throw new Error("Read access was not granted. You can reconnect later.");
+    if (!disposed) await useSource({ name: root.name, root: { kind: "directory", handle: root } });
+  }); });
+  const forget = button("Forget folder", () => { void run(async () => {
+    await connections.forget();
+    savedConnection = undefined;
+    reconnect.hidden = forget.hidden = true;
+    clearLibrary();
+    status.textContent = "Folder connection forgotten. Original files were not changed.";
+  }); });
+  reconnect.hidden = forget.hidden = true;
+  connectionActions.append(reconnect, forget);
+  connection.append(connectionText, connectionActions);
   const status = element("p", "library-status");
   status.setAttribute("role", "status");
+  const locationNotice = element("section", "library-import");
+  locationNotice.hidden = !isSharedFileDocument();
+  locationNotice.append(element("p", "library-description", "Mosaic was opened from a network location. Save this HTML to a Windows drive and open that copy to enable remembered folder connections. Your image library folder can stay where it is."),
+    button("Save a local HTML copy", () => download(standaloneHtml(), "mosaic.html")));
   const filters = element("div", "library-filters");
   const search = input("Search images", "search");
   const subjects = select("Filter subject");
@@ -138,7 +176,7 @@ function mount(container: HTMLElement): () => void {
     original.removeAttribute("src");
     activeId = undefined;
   });
-  page.append(header, connection, filters, tags, status, grid, hint, dialog);
+  page.append(header, locationNotice, connection, filters, tags, status, grid, hint, dialog);
   container.replaceChildren(page);
   const observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) {
@@ -169,6 +207,7 @@ function mount(container: HTMLElement): () => void {
     description.textContent = "Connect the image library root containing images/ and states/db. Session connections need folder selection again after reopening.";
     count.textContent = "";
     reload.disabled = true;
+    connect.disabled = true;
   }
 
   async function useSource(next: FileConnection): Promise<void> {
@@ -192,6 +231,8 @@ function mount(container: HTMLElement): () => void {
     options(sources, [["", "All sources"]]);
     await refresh();
     reload.disabled = false;
+    connect.disabled = isSession;
+    connect.title = isSession ? "This selection has no reusable folder handle and cannot be remembered without copying files." : "Remember the connected folder without selecting it again.";
     if (!disposed) status.textContent = "Library connected.";
   }
 
@@ -291,7 +332,7 @@ function mount(container: HTMLElement): () => void {
   async function run(action: () => Promise<void>): Promise<void> {
     if (busy || disposed) return;
     busy = true;
-    const controls = [openSession, sessionFallback, reload];
+    const controls = [connect, openSession, sessionFallback, reload, reconnect, forget];
     controls.forEach(control => { control.disabled = true; });
     status.textContent = "Reading library…";
     try { await action(); }
@@ -302,12 +343,33 @@ function mount(container: HTMLElement): () => void {
       if (!disposed) {
         controls.forEach(control => { control.disabled = false; });
         reload.disabled = !provider;
+        connect.disabled = source?.root.kind !== "directory";
       }
     }
   }
 
+  async function restore(): Promise<void> {
+    try {
+      savedConnection = await connections.load();
+      if (disposed) return;
+      if (savedConnection) {
+        reconnect.hidden = forget.hidden = false;
+        if (await hasReadAccess(savedConnection)) {
+          await useSource({ name: savedConnection.name, root: { kind: "directory", handle: savedConnection } });
+          return;
+        }
+        connectionName.textContent = savedConnection.name;
+        status.textContent = "Saved folder found. Reconnect it to approve read access.";
+        return;
+      }
+      status.textContent = "Connect an image folder to open your library.";
+    } catch (error) {
+      if (!disposed) status.textContent = `Could not restore the folder connection. ${errorMessage(error)}`;
+    }
+  }
+
   clearLibrary();
-  status.textContent = "Connect an image folder to open your library.";
+  void run(restore);
   return () => {
     disposed = true;
     request += 1;
