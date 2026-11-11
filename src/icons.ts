@@ -1,4 +1,5 @@
 const paths = {
+  images: "M4 4h16v16H4Z M4 16l5-5 4 4 3-3 4 4 M15 8h.01",
   mosaic: "M3 3h7v7H3Z M14 3h7v7h-7Z M3 14h7v7H3Z M14 14h7v7h-7Z",
   weather: "M7 14a4 4 0 1 1 5-6 M8 3V1 M3 5 1.5 3.5 M3 10H1 M15 5l1.5-1.5 M8 20h10a4 4 0 0 0 .5-8 5 5 0 0 0-9.5 1A3.5 3.5 0 0 0 8 20Z",
   refresh: "M20 7v5h-5 M20 12a8 8 0 1 0-2.3 5.7",
