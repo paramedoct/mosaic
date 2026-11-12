@@ -320,8 +320,7 @@ function mount(container: HTMLElement): () => void {
         thumbnail.loading = "lazy";
         thumbnail.dataset.id = image.id;
         thumbnail.onerror = () => { thumbnail.alt = "Image format could not be displayed"; };
-        const tagLine = element("span", "image-tag-line", image.tags.join(" · "));
-        card.append(thumbnail, element("strong", "", image.subject), element("small", "", image.source), tagLine);
+        card.append(thumbnail);
         observer.observe(thumbnail);
         return card;
       }));
