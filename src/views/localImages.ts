@@ -190,6 +190,7 @@ function mount(container: HTMLElement): () => void {
   const next = button("Next →", () => { void move(1); });
   const zoom = button("Actual size", () => {
     const actual = stage.classList.toggle("actual-size");
+    stage.scrollTo(0, 0);
     zoom.textContent = actual ? "Fit image" : "Actual size";
   });
   navigation.append(previous, position, next, zoom);
@@ -300,6 +301,7 @@ function mount(container: HTMLElement): () => void {
     previous.disabled = index === 0;
     next.disabled = index === viewerImages.length - 1;
     stage.classList.remove("actual-size");
+    stage.scrollTo(0, 0);
     zoom.textContent = "Actual size";
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
     viewerUrl = undefined;
