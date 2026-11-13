@@ -48,7 +48,6 @@
 .actual-size { display: block; }
 .actual-size .image-original { max-width: none; max-height: none; }
 .image-info { padding: 20px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-.image-hash { font-size: 10px; color: #819287; overflow-wrap: anywhere; line-height: 1.7; }
 .image-navigation { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-top: 1px solid #293239; font-size: 12px; }
 .image-navigation button:last-child { margin-left: auto; }
 @media (max-width: 1000px) {

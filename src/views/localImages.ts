@@ -140,20 +140,9 @@ function mount(container: HTMLElement): () => void {
   const classification = element("p");
   const properties = element("p", "library-description");
   const imageTags = element("div", "local-images-tags");
-  const path = element("code", "image-hash");
-  const hash = element("code", "image-hash");
   const viewerStatus = element("p", "library-status");
   viewerStatus.setAttribute("role", "status");
-  const exportImage = button("Download original", () => {
-    const image = images.find(image => image.id === activeId);
-    const current = provider;
-    if (image && current) void run(async () => {
-      const blob = await current.readImage(image.id);
-      const extensions: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "image/svg+xml": "svg" };
-      if (!disposed) download(blob, `${image.sha256}.${extensions[image.mimeType] ?? "image"}`);
-    });
-  });
-  info.append(classification, properties, imageTags, path, hash, exportImage, viewerStatus);
+  info.append(classification, properties, imageTags, viewerStatus);
   viewerBody.append(stage, info);
   const navigation = element("footer", "image-navigation");
   const previous = button("← Previous", () => { void move(-1); });
@@ -263,8 +252,6 @@ function mount(container: HTMLElement): () => void {
     classification.textContent = `${image.subject} · ${image.source}`;
     properties.textContent = `${image.mimeType} · ${bytes(image.byteSize)} · ${new Date(image.createdAt).toLocaleDateString()}`;
     imageTags.replaceChildren(...image.tags.map(tag => element("span", "local-images-tag", tag)));
-    path.textContent = image.path;
-    hash.textContent = image.sha256;
     position.textContent = `${images.indexOf(image) + 1} / ${images.length}`;
     previous.disabled = images.indexOf(image) === 0;
     next.disabled = images.indexOf(image) === images.length - 1;
