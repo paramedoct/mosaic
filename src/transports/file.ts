@@ -3,6 +3,22 @@ export type FileRoot =
   | { kind: "selection"; files: readonly File[] };
 
 export class FileTransport {
+  async remove(root: FileRoot, path: string): Promise<void> {
+    if (root.kind !== "directory") throw new Error("Connect a writable image library folder first.");
+    const parts = path.split("/");
+    if (/^[a-z][a-z0-9+.-]*:/i.test(path) ||
+      parts.some(part => !part || part === "." || part === ".." || /[\\\0]/.test(part))) {
+      throw new TypeError("Use a relative file path within the supplied root.");
+    }
+    try {
+      let directory = root.handle;
+      for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part);
+      await directory.removeEntry(parts[parts.length - 1]);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
+    }
+  }
+
   async put(root: FileRoot, path: string, data: Blob): Promise<void> {
     if (root.kind !== "directory") throw new Error("Reconnect using a writable folder to add images.");
     const parts = path.split("/");

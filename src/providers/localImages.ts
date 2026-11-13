@@ -119,7 +119,7 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
 }
 
 export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection> {
-  private files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put">>;
+  private files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove">>;
   private sqlite: SqlJsStatic;
   private database?: Database;
   private root?: FileRoot;
@@ -132,7 +132,7 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
   private importing = false;
   private closePending = false;
 
-  constructor(files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put">>, sqlite: SqlJsStatic) {
+  constructor(files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove">>, sqlite: SqlJsStatic) {
     this.files = files;
     this.sqlite = sqlite;
   }
@@ -362,6 +362,67 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
       this.records = records;
       this.groups = groups;
       return result;
+    } finally {
+      if (this.database !== candidate) candidate.close();
+      this.importing = false;
+      if (this.closePending) this.close();
+    }
+  }
+
+  async deleteEntry(entry: { kind: "image" | "group"; id: string }): Promise<{ deleted: number; shared: number; failedFiles: number }> {
+    if (this.importing) throw new Error("Wait for the library update to finish.");
+    if (!this.database || this.root?.kind !== "directory" || !this.files.put || !this.files.remove) {
+      throw new Error("Connect a writable image library folder first.");
+    }
+    const group = entry.kind === "group" ? this.groups.find(group => group.id === entry.id) : undefined;
+    const image = entry.kind === "image" ? this.records.get(entry.id) : undefined;
+    if (!group && !image) throw new Error("Image or group not found.");
+    if (image && this.groups.some(group => group.images.some(member => member.id === image.id))) {
+      throw new Error("Delete the entire group instead of an individual group image.");
+    }
+    const root = this.root;
+    const candidate = new this.sqlite.Database(this.database.export());
+    this.importing = true;
+    try {
+      candidate.run("PRAGMA foreign_keys = ON;");
+      const sharedIds = new Set(this.groups.filter(other => other.id !== group?.id).flatMap(other => other.images.map(image => image.id)));
+      const members = [...new Map((group?.images ?? [image!]).map(image => [image.id, image])).values()];
+      const removed = members.filter(image => !sharedIds.has(image.id));
+      if (group) candidate.run("DELETE FROM mosaic_image_groups WHERE id = ?;", [Number(group.id)]);
+      for (const image of removed) {
+        if (this.hasTags) candidate.run("DELETE FROM image_tags WHERE image_id = ?;", [Number(image.id)]);
+        candidate.run("DELETE FROM images WHERE id = ?;", [Number(image.id)]);
+      }
+      try {
+        const wal = await this.files.get(root, `${this.databasePath}-wal`);
+        if (wal.size) throw new Error("The library has pending SQLite WAL data. Close its writer and reload before deleting images.");
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
+      }
+      const current = new Uint8Array(await (await this.files.get(root, this.databasePath)).arrayBuffer());
+      if (current.length !== this.databaseBytes.length || current.some((value, index) => value !== this.databaseBytes[index])) {
+        throw new Error("The library changed on disk. Reload before deleting images.");
+      }
+      const records = new Map(this.records);
+      for (const image of removed) records.delete(image.id);
+      const groups = readGroups(candidate, records);
+      const updated = new Uint8Array(candidate.export());
+      await this.files.put(root, this.databasePath, new Blob([updated]));
+      this.database.close();
+      candidate.run("PRAGMA query_only = ON;");
+      this.database = candidate;
+      this.databaseBytes = updated;
+      this.records = records;
+      this.groups = groups;
+      this.tagNames = [...new Set([...records.values()].flatMap(image => [...image.tags]))].sort();
+      let failedFiles = 0;
+      for (const image of removed) {
+        for (const path of new Set([image.path, `images/${image.source}/${image.sha256}`])) {
+          try { await this.files.remove(root, path); }
+          catch { failedFiles += 1; }
+        }
+      }
+      return { deleted: removed.length, shared: members.length - removed.length, failedFiles };
     } finally {
       if (this.database !== candidate) candidate.close();
       this.importing = false;

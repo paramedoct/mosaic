@@ -182,6 +182,35 @@ function mount(container: HTMLElement): () => void {
   const imageTags = element("div", "local-images-tags");
   const viewerStatus = element("p", "library-status");
   viewerStatus.setAttribute("role", "status");
+  const deleteImage = button("Delete image", () => {
+    const current = provider;
+    const root = source?.root;
+    const image = viewerImages[activeIndex];
+    const group = viewerGroup;
+    if (busy || !current || root?.kind !== "directory" || !image) return;
+    const message = group
+      ? `Delete this entire group (${group.images.length} images)? Images shared with other groups will be kept.`
+      : "Permanently delete this image from the library and disk?";
+    if (!window.confirm(message)) return;
+    const permission = root.handle.requestPermission({ mode: "readwrite" });
+    void run(async () => {
+      viewerStatus.textContent = "Deleting…";
+      try {
+        if (await permission !== "granted") throw new Error("Write access was not granted. Nothing was deleted.");
+        const result = await current.deleteEntry({ kind: group ? "group" : "image", id: group?.id ?? image.id });
+        if (disposed) return;
+        dialog.close();
+        await refresh();
+        status.textContent = `${group ? "Group deleted. " : ""}${result.deleted} images deleted.` +
+          (result.shared ? ` ${result.shared} shared images kept.` : "") +
+          (result.failedFiles ? ` ${result.failedFiles} files could not be removed from disk.` : "");
+      } catch (error) {
+        if (!disposed) viewerStatus.textContent = errorMessage(error);
+        throw error;
+      }
+    });
+  }, "danger-button");
+  viewerHeader.insertBefore(deleteImage, close);
   info.append(classification, properties, imageTags, viewerStatus);
   viewerBody.append(stage, info);
   const navigation = element("footer", "image-navigation");
@@ -290,9 +319,11 @@ function mount(container: HTMLElement): () => void {
   async function showImage(index: number): Promise<void> {
     const image = viewerImages[index];
     const current = provider;
-    if (!image || !current || disposed) return;
+    if (!image || !current || disposed || busy) return;
     const token = ++viewerRequest;
     activeIndex = index;
+    deleteImage.hidden = source?.root.kind !== "directory";
+    deleteImage.textContent = viewerGroup ? "Delete group" : "Delete image";
     viewerTitle.textContent = viewerGroup?.subject ?? image.subject;
     classification.textContent = viewerGroup ? `${viewerGroup.subject} · ${viewerGroup.source}` : `${image.subject} · ${image.source}`;
     properties.textContent = `${image.mimeType} · ${bytes(image.byteSize)} · ${new Date(image.createdAt).toLocaleDateString()}`;
@@ -379,7 +410,7 @@ function mount(container: HTMLElement): () => void {
   async function run(action: () => Promise<void>): Promise<void> {
     if (busy || disposed) return;
     busy = true;
-    const controls = [connect, openSession, sessionFallback, reload, reconnect, forget, addImages, importSubject, importSource, importFiles];
+    const controls = [connect, openSession, sessionFallback, reload, reconnect, forget, addImages, importSubject, importSource, importFiles, deleteImage];
     controls.forEach(control => { control.disabled = true; });
     status.textContent = "Reading library…";
     try { await action(); }
