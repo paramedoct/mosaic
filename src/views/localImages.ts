@@ -104,6 +104,43 @@ function mount(container: HTMLElement): () => void {
   connection.append(connectionText, connectionActions);
   const status = element("p", "library-status");
   status.setAttribute("role", "status");
+  const importPanel = element("form", "library-import");
+  importPanel.hidden = true;
+  const importSubject = input("Subject");
+  const importSource = input("Source");
+  importSubject.required = importSource.required = true;
+  const importFiles = input("Images to add", "file");
+  importFiles.accept = "image/*";
+  importFiles.multiple = true;
+  importFiles.required = true;
+  const addImages = element("button", "primary-button", "Add images");
+  addImages.type = "submit";
+  const importControls = element("div", "library-actions");
+  for (const [label, control] of [["Subject", importSubject], ["Source", importSource], ["Images", importFiles]] as const) {
+    const field = element("label", "image-import-field", label);
+    field.append(control);
+    importControls.append(field);
+  }
+  importControls.append(addImages);
+  importPanel.append(element("h2", "", "Add images"), importControls,
+    element("p", "library-hint", "Identical files are skipped, even with different names or sources. Images and metadata are saved to the connected folder."));
+  importPanel.onsubmit = event => {
+    event.preventDefault();
+    const current = provider;
+    const root = source?.root;
+    const selected = importFiles.files ? [...importFiles.files] : [];
+    if (busy || !current || root?.kind !== "directory") return;
+    const permission = root.handle.requestPermission({ mode: "readwrite" });
+    void run(async () => {
+      if (await permission !== "granted") throw new Error("Write access was not granted. No images were added.");
+      status.textContent = "Hashing and adding images…";
+      const result = await current.addImages(selected, importSubject.value, importSource.value);
+      if (disposed) return;
+      importFiles.value = "";
+      await refresh();
+      status.textContent = `${result.added} images added · ${result.skipped} duplicates skipped.`;
+    });
+  };
   const locationNotice = element("section", "library-import");
   locationNotice.hidden = !isSharedFileDocument();
   locationNotice.append(element("p", "library-description", "Mosaic was opened from a network location. Save this HTML to a Windows drive and open that copy to enable remembered folder connections. Your image library folder can stay where it is."),
@@ -124,7 +161,7 @@ function mount(container: HTMLElement): () => void {
   tags.setAttribute("aria-label", "Filter tags");
   const grid = element("div", "image-grid");
   grid.setAttribute("aria-label", "Image collection");
-  const hint = element("p", "library-hint", "Read-only prototype · SQLite metadata is read in memory. Images are opened from their source only when displayed.");
+  const hint = element("p", "library-hint", "Images stay in the connected folder. Adding images requires folder write access; identical files are skipped using SHA-256.");
 
   const dialog = element("dialog", "image-dialog");
   dialog.setAttribute("aria-label", "Image viewer");
@@ -165,7 +202,7 @@ function mount(container: HTMLElement): () => void {
     original.removeAttribute("src");
     activeId = undefined;
   });
-  page.append(header, locationNotice, connection, filters, tags, status, grid, hint, dialog);
+  page.append(header, locationNotice, connection, importPanel, filters, tags, status, grid, hint, dialog);
   container.replaceChildren(page);
   const observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) {
@@ -197,6 +234,7 @@ function mount(container: HTMLElement): () => void {
     count.textContent = "";
     reload.disabled = true;
     connect.disabled = true;
+    importPanel.hidden = true;
   }
 
   async function useSource(next: FileConnection): Promise<void> {
@@ -214,7 +252,8 @@ function mount(container: HTMLElement): () => void {
     connectionName.textContent = next.name;
     description.textContent = isSession
         ? "Original image library folder opened for this session. Files are read-only and are not copied to browser storage."
-        : "Original image library folder connected. The database and images are read-only; image copies are not stored in the browser.";
+        : "Image library folder connected. You can add images with write access; image copies are not stored in the browser.";
+    importPanel.hidden = isSession;
     search.value = "";
     options(subjects, [["", "All subjects"]]);
     options(sources, [["", "All sources"]]);
@@ -318,7 +357,7 @@ function mount(container: HTMLElement): () => void {
   async function run(action: () => Promise<void>): Promise<void> {
     if (busy || disposed) return;
     busy = true;
-    const controls = [connect, openSession, sessionFallback, reload, reconnect, forget];
+    const controls = [connect, openSession, sessionFallback, reload, reconnect, forget, addImages, importSubject, importSource, importFiles];
     controls.forEach(control => { control.disabled = true; });
     status.textContent = "Reading library…";
     try { await action(); }

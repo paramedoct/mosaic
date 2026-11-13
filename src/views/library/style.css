@@ -23,6 +23,8 @@
 .library-import { border: 1px solid #293239; border-radius: 12px; padding: 20px 24px; background: #14191d; }
 .library-import h2 { font-size: 15px; margin-bottom: 18px; }
 .library-import .library-hint { margin-bottom: 0; }
+.local-images-connection + .library-import { margin-top: 16px; }
+.image-import-field { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: #98a4b0; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 16px; padding-block: 12px 24px; }
 .image-grid > .library-empty { grid-column: 1 / -1; border: 1px dashed #344039; border-radius: 12px; margin-top: 12px; }
 .image-card { padding: 0; overflow: hidden; background: #171c21; }
