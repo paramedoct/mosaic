@@ -1,5 +1,5 @@
 import type { View } from "../types";
-import { LocalImagesProvider, type ImageSummary } from "../providers/localImages";
+import { LocalImagesProvider, type ImageGroup, type ImageSummary } from "../providers/localImages";
 import { FileTransport } from "../transports/file";
 import { chooseDirectory, hasReadAccess, isSharedFileDocument, requestReadAccess, type FileConnection } from "../files/connection";
 import { standaloneHtml } from "../files/standalone";
@@ -26,7 +26,9 @@ function mount(container: HTMLElement): () => void {
   let source: FileConnection | undefined;
   let savedConnection: FileSystemDirectoryHandle | undefined;
   let images: readonly ImageSummary[] = [];
-  let activeId: string | undefined;
+  let viewerImages: readonly ImageSummary[] = [];
+  let viewerGroup: ImageGroup | undefined;
+  let activeIndex = 0;
   let viewerUrl: string | undefined;
   const selectedTags = new Set<string>();
   const thumbnailUrls = new Set<string>();
@@ -109,8 +111,8 @@ function mount(container: HTMLElement): () => void {
   const importSubject = input("Subject");
   const importSource = input("Source");
   importSubject.required = importSource.required = true;
-  const importFiles = input("Images to add", "file");
-  importFiles.accept = "image/*";
+  const importFiles = input("Images or ZIP files to add", "file");
+  importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
   importFiles.multiple = true;
   importFiles.required = true;
   const addImages = element("button", "primary-button", "Add images");
@@ -123,7 +125,7 @@ function mount(container: HTMLElement): () => void {
   }
   importControls.append(addImages);
   importPanel.append(element("h2", "", "Add images"), importControls,
-    element("p", "library-hint", "Identical files are skipped, even with different names or sources. Images and metadata are saved to the connected folder."));
+    element("p", "library-hint", "Each ZIP becomes one image group, sorted by filename. Identical images are stored once and shared between groups. ZIP files may include folders; other files are ignored."));
   importPanel.onsubmit = event => {
     event.preventDefault();
     const current = provider;
@@ -133,12 +135,13 @@ function mount(container: HTMLElement): () => void {
     const permission = root.handle.requestPermission({ mode: "readwrite" });
     void run(async () => {
       if (await permission !== "granted") throw new Error("Write access was not granted. No images were added.");
-      status.textContent = "Hashing and adding images…";
+      status.textContent = "Opening files, hashing and adding images…";
       const result = await current.addImages(selected, importSubject.value, importSource.value);
       if (disposed) return;
       importFiles.value = "";
       await refresh();
-      status.textContent = `${result.added} images added · ${result.skipped} duplicates skipped.`;
+      status.textContent = `${result.added} images added · ${result.skipped} duplicates reused or skipped.` +
+        (result.groupsAdded !== undefined ? ` ${result.groupsAdded} groups added · ${result.groupsSkipped} existing groups skipped.` : "");
     });
   };
   const locationNotice = element("section", "library-import");
@@ -200,7 +203,9 @@ function mount(container: HTMLElement): () => void {
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
     viewerUrl = undefined;
     original.removeAttribute("src");
-    activeId = undefined;
+    viewerImages = [];
+    viewerGroup = undefined;
+    activeIndex = 0;
   });
   page.append(header, locationNotice, connection, importPanel, filters, tags, status, grid, hint, dialog);
   container.replaceChildren(page);
@@ -281,19 +286,19 @@ function mount(container: HTMLElement): () => void {
     }
   }
 
-  async function showImage(id: string): Promise<void> {
-    const image = images.find(image => image.id === id);
+  async function showImage(index: number): Promise<void> {
+    const image = viewerImages[index];
     const current = provider;
     if (!image || !current || disposed) return;
     const token = ++viewerRequest;
-    activeId = id;
-    viewerTitle.textContent = image.subject;
-    classification.textContent = `${image.subject} · ${image.source}`;
+    activeIndex = index;
+    viewerTitle.textContent = viewerGroup?.subject ?? image.subject;
+    classification.textContent = viewerGroup ? `${viewerGroup.subject} · ${viewerGroup.source}` : `${image.subject} · ${image.source}`;
     properties.textContent = `${image.mimeType} · ${bytes(image.byteSize)} · ${new Date(image.createdAt).toLocaleDateString()}`;
     imageTags.replaceChildren(...image.tags.map(tag => element("span", "local-images-tag", tag)));
-    position.textContent = `${images.indexOf(image) + 1} / ${images.length}`;
-    previous.disabled = images.indexOf(image) === 0;
-    next.disabled = images.indexOf(image) === images.length - 1;
+    position.textContent = `${index + 1} / ${viewerImages.length}`;
+    previous.disabled = index === 0;
+    next.disabled = index === viewerImages.length - 1;
     stage.classList.remove("actual-size");
     zoom.textContent = "Actual size";
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
@@ -303,7 +308,7 @@ function mount(container: HTMLElement): () => void {
     viewerStatus.textContent = "Reading original image…";
     if (!dialog.open) dialog.showModal();
     try {
-      const blob = await current.readImage(id);
+      const blob = await current.readImage(image.id);
       if (disposed || token !== viewerRequest || !dialog.open) return;
       viewerUrl = URL.createObjectURL(blob);
       original.src = viewerUrl;
@@ -312,8 +317,7 @@ function mount(container: HTMLElement): () => void {
   }
 
   async function move(delta: number): Promise<void> {
-    const image = images[images.findIndex(image => image.id === activeId) + delta];
-    if (image) await showImage(image.id);
+    if (viewerImages[activeIndex + delta]) await showImage(activeIndex + delta);
   }
 
   async function refresh(): Promise<void> {
@@ -324,10 +328,17 @@ function mount(container: HTMLElement): () => void {
       const result = await current.fetch({ subject: subjects.value, source: sources.value, text: search.value,
         tags: [...selectedTags], order: order.value as "oldest" | "newest" });
       if (disposed || token !== request) return;
-      images = result.images;
+      images = result.standaloneImages;
+      const entries = [
+        ...images.map(image => ({ image, group: undefined as ImageGroup | undefined, createdAt: image.createdAt, id: Number(image.id) })),
+        ...result.groups.map(group => ({ image: group.images[0], group, createdAt: group.createdAt, id: Number(group.id) })),
+      ].sort((left, right) => {
+        const compared = left.createdAt.localeCompare(right.createdAt) || left.id - right.id;
+        return order.value === "oldest" ? compared : -compared;
+      });
       options(subjects, [["", "All subjects"], ...result.subjects.map(value => [value, value] as [string, string])]);
       options(sources, [["", "All sources"], ...result.sources.map(value => [value, value] as [string, string])]);
-      count.textContent = `${images.length} / ${result.total} images · ${bytes(result.byteSize)}`;
+      count.textContent = `${entries.length} items · ${result.total} images · ${bytes(result.byteSize)}`;
       tags.replaceChildren(...result.tags.map(tag => {
         const chip = button(tag, () => {
           if (selectedTags.has(tag)) selectedTags.delete(tag); else selectedTags.add(tag);
@@ -338,19 +349,28 @@ function mount(container: HTMLElement): () => void {
       }));
       if (!result.tags.length) tags.append(element("span", "library-hint", "This library uses the original subject and source classifications."));
       releaseThumbnails();
-      grid.replaceChildren(...images.map(image => {
-        const card = button("", () => { void showImage(image.id); }, "image-card");
-        card.setAttribute("aria-label", `View ${image.subject}`);
+      grid.replaceChildren(...entries.map(({ image, group }) => {
+        const card = button("", () => {
+          viewerGroup = group;
+          viewerImages = group?.images ?? images;
+          void showImage(group ? 0 : images.findIndex(candidate => candidate.id === image.id));
+        }, group ? "image-card image-group-card" : "image-card");
+        card.setAttribute("aria-label", group ? `View ${group.subject}, ${group.images.length} images` : `View ${image.subject}`);
         const thumbnail = element("img");
         thumbnail.alt = image.subject;
         thumbnail.loading = "lazy";
         thumbnail.dataset.id = image.id;
         thumbnail.onerror = () => { thumbnail.alt = "Image format could not be displayed"; };
         card.append(thumbnail);
+        if (group) {
+          const badge = element("span", "image-group-count", String(group.images.length));
+          badge.setAttribute("aria-hidden", "true");
+          card.append(badge);
+        }
         observer.observe(thumbnail);
         return card;
       }));
-      if (!images.length) grid.append(element("p", "library-empty", result.total ? "No images match these filters." : "No images are registered in this library."));
+      if (!entries.length) grid.append(element("p", "library-empty", result.total ? "No images match these filters." : "No images are registered in this library."));
     } catch (error) { if (!disposed && token === request) status.textContent = errorMessage(error); }
   }
 

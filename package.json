@@ -15,6 +15,7 @@
     "vite-plugin-singlefile": "^2.3.4"
   },
   "dependencies": {
+    "fflate": "^0.8.3",
     "sql.js": "^1.15.2"
   }
 }

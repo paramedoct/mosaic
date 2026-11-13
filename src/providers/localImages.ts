@@ -1,6 +1,7 @@
 import type { Database, SqlJsStatic, SqlValue } from "sql.js";
 import type { Provider } from "../types";
 import type { FileRoot, FileTransport } from "../transports/file";
+import { isImageArchive, readImageArchive } from "../files/imageArchive";
 
 export interface ImageQuery {
   subject?: string;
@@ -24,11 +25,60 @@ export interface ImageSummary {
 
 export interface ImageCollection {
   images: readonly ImageSummary[];
+  standaloneImages: readonly ImageSummary[];
+  groups: readonly ImageGroup[];
   subjects: readonly string[];
   sources: readonly string[];
   tags: readonly string[];
   total: number;
   byteSize: number;
+}
+
+export interface ImageGroup {
+  id: string;
+  subject: string;
+  source: string;
+  createdAt: string;
+  images: readonly ImageSummary[];
+}
+
+interface StoredImageGroup extends ImageGroup { sha256: string; }
+
+export interface ImageImportResult {
+  added: number;
+  skipped: number;
+  groupsAdded?: number;
+  groupsSkipped?: number;
+}
+
+async function digest(data: ArrayBuffer): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+function readGroups(database: Database, records: Map<string, ImageSummary>): StoredImageGroup[] {
+  const tables = rows(database, "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('mosaic_image_groups', 'mosaic_image_group_items');");
+  if (!tables.length) return [];
+  if (tables.length !== 2) throw new Error("The image group schema is incomplete.");
+  const items = new Map<string, ImageSummary[]>();
+  for (const row of rows(database, "SELECT group_id, image_id FROM mosaic_image_group_items ORDER BY group_id, position;")) {
+    const image = records.get(String(row.image_id));
+    if (!image) continue;
+    const id = String(row.group_id);
+    const members = items.get(id) ?? [];
+    members.push(image);
+    items.set(id, members);
+  }
+  return rows(database, "SELECT id, subject, source, sha256, created_at FROM mosaic_image_groups;").map(row => {
+    if (typeof row.id !== "number" || !Number.isSafeInteger(row.id) || row.id < 1 ||
+      typeof row.subject !== "string" || !row.subject.trim() ||
+      typeof row.source !== "string" || !row.source.trim() || typeof row.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(row.sha256) ||
+      typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at))) {
+      throw new Error("The image groups contain invalid metadata.");
+    }
+    return { id: String(row.id), subject: row.subject, source: row.source,
+      sha256: row.sha256, createdAt: row.created_at, images: items.get(String(row.id)) ?? [] };
+  }).filter(group => group.images.length);
 }
 
 const imageExtensions: Record<string, string> = {
@@ -74,6 +124,7 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
   private database?: Database;
   private root?: FileRoot;
   private records = new Map<string, ImageSummary>();
+  private groups: StoredImageGroup[] = [];
   private tagNames: string[] = [];
   private hasTags = false;
   private databasePath = "";
@@ -131,10 +182,12 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
         }
         for (const [id, tags] of imageTags) records.get(id)!.tags = [...tags].sort();
       }
+      const groups = readGroups(database, records);
       this.database?.close();
       this.database = database;
       this.root = root;
       this.records = records;
+      this.groups = groups;
       this.tagNames = [...names].sort();
       this.hasTags = hasTags;
       this.databasePath = databasePath;
@@ -165,10 +218,24 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
     const ids = rows(this.database,
       `SELECT images.id FROM images ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY created_at ${direction}, images.id ${direction};`, values);
     const all = [...this.records.values()];
+    const images = ids.map(row => this.records.get(String(row.id))!);
+    const groupedIds = new Set(this.groups.flatMap(group => group.images.map(image => image.id)));
+    const groups = this.groups.filter(group => {
+      if (query.subject && group.subject !== query.subject || query.source && group.source !== query.source) return false;
+      const text = query.text?.trim().toLowerCase();
+      if (text && !`${group.subject} ${group.source}`.toLowerCase().includes(text) &&
+        !group.images.some(image => `${image.subject} ${image.source} ${image.sha256}`.toLowerCase().includes(text))) return false;
+      return (query.tags ?? []).every(tag => group.images.some(image => image.tags.includes(tag)));
+    }).sort((left, right) => {
+      const compared = left.createdAt.localeCompare(right.createdAt) || Number(left.id) - Number(right.id);
+      return query.order === "oldest" ? compared : -compared;
+    });
     return {
-      images: ids.map(row => this.records.get(String(row.id))!),
-      subjects: [...new Set(all.map(image => image.subject))].sort(),
-      sources: [...new Set(all.map(image => image.source))].sort(),
+      images,
+      standaloneImages: images.filter(image => !groupedIds.has(image.id)),
+      groups,
+      subjects: [...new Set([...all.map(image => image.subject), ...this.groups.map(group => group.subject)])].sort(),
+      sources: [...new Set([...all.map(image => image.source), ...this.groups.map(group => group.source)])].sort(),
       tags: this.tagNames,
       total: all.length,
       byteSize: all.reduce((size, image) => size + image.byteSize, 0),
@@ -187,7 +254,7 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
     return file.slice(0, file.size, image.mimeType);
   }
 
-  async addImages(files: readonly File[], subject: string, source: string): Promise<{ added: number; skipped: number }> {
+  async addImages(files: readonly File[], subject: string, source: string): Promise<ImageImportResult> {
     if (this.importing) throw new Error("An image import is already running.");
     if (!this.database || !this.root || this.root.kind !== "directory" || !this.files.put) {
       throw new Error("Connect a writable image library folder first.");
@@ -204,22 +271,73 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
     this.importing = true;
     try {
       candidate.run("PRAGMA foreign_keys = ON;");
-      const known = new Set([...this.records.values()].map(image => image.sha256));
+      const known = new Map([...this.records.values()].map(image => [image.sha256, image]));
       const pending: { file: File; image: ImageSummary }[] = [];
       let skipped = 0;
-      for (const file of files) {
-        const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-        const sha256 = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
-        if (known.has(sha256)) { skipped += 1; continue; }
-        if (!imageExtensions[file.type.toLowerCase()]) throw new Error(`Not a supported image: ${file.name}`);
-        const createdAt = new Date().toISOString();
-        candidate.run("INSERT INTO images (subject, source, sha256, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?);",
-          [subject, source, sha256, file.type, file.size, createdAt]);
-        const image = parseImage(rows(candidate, "SELECT id, subject, source, sha256, mime_type, byte_size, created_at FROM images WHERE sha256 = ?;", [sha256])[0]);
-        pending.push({ file, image });
-        known.add(sha256);
+      let groupsAdded = 0;
+      let groupsSkipped = 0;
+      const hasArchives = files.some(isImageArchive);
+      let schemaChanged = false;
+      for (const table of ["mosaic_image_groups", "mosaic_image_group_items"]) {
+        if (rows(candidate, `PRAGMA table_info(${table});`).some(column => column.name === "name")) {
+          candidate.run(`ALTER TABLE ${table} DROP COLUMN name;`);
+          schemaChanged = true;
+        }
       }
-      if (!pending.length) return { added: 0, skipped };
+      if (hasArchives) candidate.run(`
+        CREATE TABLE IF NOT EXISTS mosaic_image_groups (
+          id INTEGER PRIMARY KEY, subject TEXT NOT NULL, source TEXT NOT NULL,
+          sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mosaic_image_group_items (
+          group_id INTEGER NOT NULL REFERENCES mosaic_image_groups(id) ON DELETE CASCADE,
+          image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL CHECK(position >= 0),
+          PRIMARY KEY (group_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS mosaic_image_group_items_image_idx ON mosaic_image_group_items(image_id);
+      `);
+      for (const selected of files) {
+        const archive = isImageArchive(selected);
+        const members = archive ? await readImageArchive(selected) : [selected];
+        const manifest: { sha256: string; id: string }[] = [];
+        for (const file of members) {
+          const sha256 = await digest(await file.arrayBuffer());
+          const existing = known.get(sha256);
+          if (existing) {
+            skipped += 1;
+            manifest.push({ sha256, id: existing.id });
+            continue;
+          }
+          if (!imageExtensions[file.type.toLowerCase()]) throw new Error(`Not a supported image: ${file.name}`);
+          const createdAt = new Date().toISOString();
+          candidate.run("INSERT INTO images (subject, source, sha256, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?);",
+            [subject, source, sha256, file.type, file.size, createdAt]);
+          const image = parseImage(rows(candidate, "SELECT id, subject, source, sha256, mime_type, byte_size, created_at FROM images WHERE sha256 = ?;", [sha256])[0]);
+          pending.push({ file, image });
+          known.set(sha256, image);
+          manifest.push({ sha256, id: image.id });
+        }
+        if (archive) {
+          const hashes = manifest.map(item => item.sha256);
+          const sha256 = await digest(new TextEncoder().encode(JSON.stringify(hashes)).buffer);
+          if (rows(candidate, "SELECT id FROM mosaic_image_groups WHERE sha256 = ?;", [sha256]).length ||
+            this.groups.some(group => group.images.length === hashes.length && group.images.every((image, index) => image.sha256 === hashes[index]))) {
+            groupsSkipped += 1;
+            continue;
+          }
+          candidate.run("INSERT INTO mosaic_image_groups (subject, source, sha256, created_at) VALUES (?, ?, ?, ?);",
+            [subject, source, sha256, new Date().toISOString()]);
+          const groupId = rows(candidate, "SELECT last_insert_rowid() AS id;")[0].id;
+          manifest.forEach((item, position) => candidate.run(
+            "INSERT INTO mosaic_image_group_items (group_id, image_id, position) VALUES (?, ?, ?);",
+            [groupId, Number(item.id), position]));
+          groupsAdded += 1;
+        }
+      }
+      const result: ImageImportResult = { added: pending.length, skipped };
+      if (hasArchives) { result.groupsAdded = groupsAdded; result.groupsSkipped = groupsSkipped; }
+      if (!pending.length && !groupsAdded && !schemaChanged) return result;
       for (const { file, image } of pending) await this.files.put(root, image.path, file);
       try {
         const wal = await this.files.get(root, `${this.databasePath}-wal`);
@@ -232,13 +350,18 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
         throw new Error("The library changed on disk. Reload the library before adding images again.");
       }
       const updated = new Uint8Array(candidate.export());
+      if (updated.length > 64 * 1024 * 1024) throw new Error("The library metadata exceeds the 64 MB limit.");
+      const records = new Map(this.records);
+      for (const { image } of pending) records.set(image.id, image);
+      const groups = readGroups(candidate, records);
       await this.files.put(root, this.databasePath, new Blob([updated]));
       this.database.close();
       candidate.run("PRAGMA query_only = ON;");
       this.database = candidate;
       this.databaseBytes = updated;
-      for (const { image } of pending) this.records.set(image.id, image);
-      return { added: pending.length, skipped };
+      this.records = records;
+      this.groups = groups;
+      return result;
     } finally {
       if (this.database !== candidate) candidate.close();
       this.importing = false;
@@ -253,6 +376,7 @@ export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection
     this.database = undefined;
     this.root = undefined;
     this.records.clear();
+    this.groups = [];
     this.tagNames = [];
   }
 }

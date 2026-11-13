@@ -2,8 +2,8 @@ import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import { readFileSync } from "node:fs";
 
-const notices = ["sql.js"].map(name =>
-  readFileSync(new URL(`./3rdparty/${name}/copyright`, import.meta.url), "utf8")
+const notices = ["./3rdparty/sql.js/copyright", "./node_modules/fflate/LICENSE"].map(path =>
+  readFileSync(new URL(path, import.meta.url), "utf8")
 ).join("\n\n");
 
 export default defineConfig({
