@@ -118,7 +118,7 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
   };
 }
 
-export class LocalImagesProvider implements Provider<ImageQuery, ImageCollection> {
+export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   private files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove">>;
   private sqlite: SqlJsStatic;
   private database?: Database;

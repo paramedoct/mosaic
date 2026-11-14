@@ -1,13 +1,13 @@
 import type { View } from "../types";
-import { LocalImagesProvider, type ImageGroup, type ImageSummary } from "../providers/localImages";
+import { ScryProvider, type ImageGroup, type ImageSummary } from "../providers/scry";
 import { FileTransport } from "../transports/file";
 import { chooseDirectory, droppedDirectory, hasReadAccess, isSharedFileDocument, requestReadAccess, type FileConnection } from "../files/connection";
 import { standaloneHtml } from "../files/standalone";
 import { waitFor } from "../files/pending";
 import { ConnectionStore } from "../storage/connections";
 import { loadSqlite } from "../sqlite/engine";
-import { button, download, element, errorMessage, input, options, select } from "./library/ui";
-import "./library/style.css";
+import { button, download, element, errorMessage, input, options, select } from "./scry/ui";
+import "./scry/style.css";
 
 const files = new FileTransport();
 const connections = new ConnectionStore();
@@ -26,7 +26,7 @@ function mount(container: HTMLElement): () => void {
   let pendingConnection: AbortController | undefined;
   let request = 0;
   let viewerRequest = 0;
-  let provider: LocalImagesProvider | undefined;
+  let provider: ScryProvider | undefined;
   let source: FileConnection | undefined;
   let savedConnection: FileSystemDirectoryHandle | undefined;
   let images: readonly ImageSummary[] = [];
@@ -302,7 +302,7 @@ function mount(container: HTMLElement): () => void {
     const sqlite = await waitFor(loadSqlite(), "SQLite did not finish starting. Try reconnecting the folder.", 15000, signal);
     if (disposed || !isCurrent()) return;
     status.textContent = "Reading library database…";
-    const candidate = new LocalImagesProvider(files, sqlite);
+    const candidate = new ScryProvider(files, sqlite);
     const pending = candidate.connect(next.root);
     try { await waitFor(pending, "The browser did not finish reading the library database. Try reconnecting the folder.", 15000, signal); }
     catch (error) {
