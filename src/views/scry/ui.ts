@@ -38,11 +38,14 @@ export function options(node: HTMLSelectElement, values: readonly [string, strin
   if (values.some(([value]) => value === selected)) node.value = selected;
 }
 
-export function download(blob: Blob, name: string): void {
+export function downloadHtml(): void {
+  const html = document.documentElement.cloneNode(true) as HTMLElement;
+  html.querySelector("#app")?.replaceChildren();
+  const blob = new Blob(["<!doctype html>\n", html.outerHTML], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = element("a");
   link.href = url;
-  link.download = name;
+  link.download = "mosaic.html";
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

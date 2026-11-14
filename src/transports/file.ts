@@ -2,17 +2,26 @@ export type FileRoot =
   | { kind: "directory"; handle: FileSystemDirectoryHandle }
   | { kind: "selection"; files: readonly File[] };
 
+function relativePath(path: string): string[] {
+  const parts = path.split("/");
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) ||
+    parts.some(part => !part || part === "." || part === ".." || /[\\\0]/.test(part))) {
+    throw new TypeError("Use a relative file path within the supplied root.");
+  }
+  return parts;
+}
+
+async function parentDirectory(directory: FileSystemDirectoryHandle, parts: readonly string[], create = false): Promise<FileSystemDirectoryHandle> {
+  for (const name of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(name, { create });
+  return directory;
+}
+
 export class FileTransport {
   async remove(root: FileRoot, path: string): Promise<void> {
     if (root.kind !== "directory") throw new Error("Connect a writable image library folder first.");
-    const parts = path.split("/");
-    if (/^[a-z][a-z0-9+.-]*:/i.test(path) ||
-      parts.some(part => !part || part === "." || part === ".." || /[\\\0]/.test(part))) {
-      throw new TypeError("Use a relative file path within the supplied root.");
-    }
+    const parts = relativePath(path);
     try {
-      let directory = root.handle;
-      for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part);
+      const directory = await parentDirectory(root.handle, parts);
       await directory.removeEntry(parts[parts.length - 1]);
     } catch (error) {
       if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
@@ -21,16 +30,11 @@ export class FileTransport {
 
   async put(root: FileRoot, path: string, data: Blob): Promise<void> {
     if (root.kind !== "directory") throw new Error("Reconnect using a writable folder to add images.");
-    const parts = path.split("/");
-    if (/^[a-z][a-z0-9+.-]*:/i.test(path) ||
-      parts.some(part => !part || part === "." || part === ".." || /[\\\0]/.test(part))) {
-      throw new TypeError("Use a relative file path within the supplied root.");
-    }
+    const parts = relativePath(path);
     let stage = "opening destination";
     let writer: FileSystemWritableFileStream | undefined;
     try {
-      let directory = root.handle;
-      for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part, { create: true });
+      const directory = await parentDirectory(root.handle, parts, true);
       const handle = await directory.getFileHandle(parts[parts.length - 1], { create: true });
       writer = await handle.createWritable();
       stage = "writing data";
@@ -45,16 +49,11 @@ export class FileTransport {
   }
 
   async get(root: FileRoot, path: string): Promise<File> {
-    const parts = path.split("/");
-    if (/^[a-z][a-z0-9+.-]*:/i.test(path) ||
-      parts.some(part => !part || part === "." || part === ".." || /[\\\0]/.test(part))) {
-      throw new TypeError("Use a relative file path within the supplied root.");
-    }
+    const parts = relativePath(path);
 
     switch (root.kind) {
       case "directory": {
-        let directory = root.handle;
-        for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part);
+        const directory = await parentDirectory(root.handle, parts);
         return (await directory.getFileHandle(parts[parts.length - 1])).getFile();
       }
       case "selection": {

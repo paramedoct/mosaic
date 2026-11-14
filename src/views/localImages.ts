@@ -1,16 +1,12 @@
 import type { View } from "../types";
-import { ScryProvider, type ImageGroup, type ImageSummary } from "../providers/scry";
-import { FileTransport } from "../transports/file";
-import { chooseDirectory, droppedDirectory, hasReadAccess, isSharedFileDocument, requestReadAccess, type FileConnection } from "../files/connection";
-import { standaloneHtml } from "../files/standalone";
-import { waitFor } from "../files/pending";
-import { ConnectionStore } from "../storage/connections";
-import { loadSqlite } from "../sqlite/engine";
-import { button, download, element, errorMessage, input, options, select } from "./scry/ui";
+import { ScryProvider, loadSqlite, type ImageGroup, type ImageSummary } from "../providers/scry";
+import { FileTransport, type FileRoot } from "../transports/file";
+import { chooseDirectory, droppedDirectory, hasReadAccess, requestReadAccess, savedFolder, waitFor } from "./scry/folders";
+import { button, downloadHtml, element, errorMessage, input, options, select } from "./scry/ui";
 import "./scry/style.css";
 
 const files = new FileTransport();
-const connections = new ConnectionStore();
+type FileConnection = { name: string; root: FileRoot };
 
 function bytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -29,7 +25,6 @@ function mount(container: HTMLElement): () => void {
   let provider: ScryProvider | undefined;
   let source: FileConnection | undefined;
   let savedConnection: FileSystemDirectoryHandle | undefined;
-  let images: readonly ImageSummary[] = [];
   let viewerImages: readonly ImageSummary[] = [];
   let viewerGroup: ImageGroup | undefined;
   let activeIndex = 0;
@@ -97,7 +92,7 @@ function mount(container: HTMLElement): () => void {
     });
   }); });
   const forget = button("Forget folder", () => { void run(async () => {
-    const persistence = await connections.forget();
+    const persistence = await savedFolder.forget();
     savedConnection = undefined;
     reconnect.hidden = forget.hidden = true;
     clearLibrary();
@@ -169,8 +164,8 @@ function mount(container: HTMLElement): () => void {
     });
   };
   const locationNotice = element("div", "library-actions local-images-copy");
-  locationNotice.hidden = !isSharedFileDocument();
-  locationNotice.append(button("Save a local HTML copy", () => download(standaloneHtml(), "mosaic.html")));
+  locationNotice.hidden = window.location.protocol !== "file:" || !window.location.hostname;
+  locationNotice.append(button("Save a local HTML copy", downloadHtml));
   const filters = element("div", "library-filters");
   const search = input("Search images", "search");
   const subjects = select("Filter subject");
@@ -282,7 +277,6 @@ function mount(container: HTMLElement): () => void {
     provider?.close();
     provider = undefined;
     source = undefined;
-    images = [];
     selectedTags.clear();
     tags.replaceChildren();
     grid.replaceChildren(element("p", "library-empty", "Connect the image library folder containing images/ and states/db."));
@@ -336,7 +330,7 @@ function mount(container: HTMLElement): () => void {
 
   async function rememberFolder(root: FileSystemDirectoryHandle): Promise<void> {
     try {
-      const persistence = await connections.save(root);
+      const persistence = await savedFolder.save(root);
       if (disposed) return;
       savedConnection = root;
       reconnect.hidden = true;
@@ -433,7 +427,7 @@ function mount(container: HTMLElement): () => void {
       const result = await current.fetch({ subject: subjects.value, source: sources.value, text: search.value,
         tags: [...selectedTags], order: order.value as "oldest" | "newest" });
       if (disposed || token !== request) return;
-      images = result.standaloneImages;
+      const images = result.standaloneImages;
       const entries = [
         ...images.map(image => ({ image, group: undefined as ImageGroup | undefined, createdAt: image.createdAt, id: Number(image.id) })),
         ...result.groups.map(group => ({ image: group.images[0], group, createdAt: group.createdAt, id: Number(group.id) })),
@@ -509,7 +503,7 @@ function mount(container: HTMLElement): () => void {
       expired = true;
     }, 10000);
     try {
-      const saved = await connections.load();
+      const saved = await savedFolder.load();
       if (!isCurrent()) return;
       savedConnection = saved;
       if (savedConnection) {

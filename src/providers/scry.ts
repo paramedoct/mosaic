@@ -1,7 +1,11 @@
+import initialize from "sql.js/dist/sql-wasm-inline.js";
 import type { Database, SqlJsStatic, SqlValue } from "sql.js";
 import type { Provider } from "../types";
 import type { FileRoot, FileTransport } from "../transports/file";
-import { isImageArchive, readImageArchive } from "../files/imageArchive";
+import { isImageArchive, readImageArchive } from "./imageArchive";
+
+let engine: Promise<SqlJsStatic> | undefined;
+export function loadSqlite(): Promise<SqlJsStatic> { return engine ??= initialize(); }
 
 export interface ImageQuery {
   subject?: string;
