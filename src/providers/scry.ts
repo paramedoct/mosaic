@@ -96,11 +96,9 @@ const imageExtensions: Record<string, string> = {
 const archiveLimit = 256 * 1024 * 1024;
 const entryLimit = 10000;
 const imageTypes: Record<string, string> = {
-  jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg",
-  png: "image/png", apng: "image/apng", gif: "image/gif", webp: "image/webp",
-  avif: "image/avif", svg: "image/svg+xml", bmp: "image/bmp", tif: "image/tiff",
-  tiff: "image/tiff", ico: "image/x-icon", heic: "image/heic", heif: "image/heif", jxl: "image/jxl",
+  jpeg: "image/jpeg", jfif: "image/jpeg", tif: "image/tiff",
 };
+for (const [type, extension] of Object.entries(imageExtensions)) imageTypes[extension] ??= type;
 
 function isImageArchive(file: File): boolean {
   return /\.zip$/i.test(file.name) || ["application/zip", "application/x-zip", "application/x-zip-compressed"].includes(file.type);
@@ -135,13 +133,8 @@ async function readImageArchive(file: File): Promise<File[]> {
 }
 
 function rows(database: Database, sql: string, parameters: SqlValue[] = []): Record<string, SqlValue>[] {
-  const statement = database.prepare(sql);
-  try {
-    statement.bind(parameters);
-    const values: Record<string, SqlValue>[] = [];
-    while (statement.step()) values.push(statement.getAsObject());
-    return values;
-  } finally { statement.free(); }
+  const result = database.exec(sql, parameters)[0];
+  return result?.values.map(values => Object.fromEntries(result.columns.map((column, index) => [column, values[index]]))) ?? [];
 }
 
 function parseImage(record: Record<string, SqlValue>): ImageSummary {
@@ -174,7 +167,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   private hasTags = false;
   private databasePath = "";
   private databaseBytes = new Uint8Array();
-  private importing = false;
+  private updating = false;
   private closePending = false;
 
   constructor(files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove">>, sqlite: SqlJsStatic) {
@@ -183,26 +176,18 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   }
 
   async connect(root: FileRoot): Promise<void> {
-    if (this.importing) throw new Error("Wait for the image import to finish before reconnecting.");
+    if (this.updating) throw new Error("Wait for the library update to finish before reconnecting.");
     let file: File | undefined;
     let databasePath = "";
     for (const path of ["states/db", "state/scry.db"]) {
-      try {
-        file = await this.files.get(root, path);
-        databasePath = path;
-        break;
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
-      }
+      file = await this.findFile(root, path);
+      if (file) { databasePath = path; break; }
     }
     if (!file) {
       throw new Error("Choose the image library folder containing images/ and states/db.");
     }
-    try {
-      const wal = await this.files.get(root, `${databasePath}-wal`);
-      if (wal.size) throw new Error("This library has pending SQLite WAL data. Close its writer and checkpoint the database before connecting.");
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
+    if ((await this.findFile(root, `${databasePath}-wal`))?.size) {
+      throw new Error("This library has pending SQLite WAL data. Close its writer and checkpoint the database before connecting.");
     }
     if (file.size > 64 * 1024 * 1024) throw new Error("The SQLite file exceeds this prototype's 64 MB metadata limit.");
     const bytes = await file.arrayBuffer();
@@ -290,17 +275,13 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   async readImage(id: string): Promise<Blob> {
     const image = this.records.get(id);
     if (!image || !this.root) throw new Error("Image not found.");
-    let file: File;
-    try { file = await this.files.get(this.root, image.path); }
-    catch (error) {
-      if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
-      file = await this.files.get(this.root, `images/${image.source}/${image.sha256}`);
-    }
+    const file = await this.findFile(this.root, image.path) ??
+      await this.files.get(this.root, `images/${image.source}/${image.sha256}`);
     return file.slice(0, file.size, image.mimeType);
   }
 
   async addImages(files: readonly File[], subject: string, source: string): Promise<ImageImportResult> {
-    if (this.importing) throw new Error("An image import is already running.");
+    if (this.updating) throw new Error("A library update is already running.");
     if (!this.database || !this.root || this.root.kind !== "directory" || !this.files.put) {
       throw new Error("Connect a writable image library folder first.");
     }
@@ -312,10 +293,8 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     if (!files.length) throw new Error("Choose images to add.");
     if (!globalThis.crypto?.subtle) throw new Error("Image hashing is unavailable. Open Mosaic from a local drive or localhost.");
     const root = this.root;
-    const candidate = new this.sqlite.Database(this.database.export());
-    this.importing = true;
-    try {
-      candidate.run("PRAGMA foreign_keys = ON;");
+    const put = this.files.put.bind(this.files);
+    return this.updateDatabase(this.database, async candidate => {
       const known = new Map([...this.records.values()].map(image => [image.sha256, image]));
       const pending: { file: File; image: ImageSummary }[] = [];
       let skipped = 0;
@@ -383,39 +362,18 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       const result: ImageImportResult = { added: pending.length, skipped };
       if (hasArchives) { result.groupsAdded = groupsAdded; result.groupsSkipped = groupsSkipped; }
       if (!pending.length && !groupsAdded && !schemaChanged) return result;
-      for (const { file, image } of pending) await this.files.put(root, image.path, file);
-      try {
-        const wal = await this.files.get(root, `${this.databasePath}-wal`);
-        if (wal.size) throw new Error("The library has pending SQLite WAL data. Close its writer and reload before adding images.");
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
-      }
-      const current = new Uint8Array(await (await this.files.get(root, this.databasePath)).arrayBuffer());
-      if (current.length !== this.databaseBytes.length || current.some((value, index) => value !== this.databaseBytes[index])) {
-        throw new Error("The library changed on disk. Reload the library before adding images again.");
-      }
+      for (const { file, image } of pending) await put(root, image.path, file);
       const updated = new Uint8Array(candidate.export());
       if (updated.length > 64 * 1024 * 1024) throw new Error("The library metadata exceeds the 64 MB limit.");
       const records = new Map(this.records);
       for (const { image } of pending) records.set(image.id, image);
-      const groups = readGroups(candidate, records);
-      await this.files.put(root, this.databasePath, new Blob([updated]));
-      this.database.close();
-      candidate.run("PRAGMA query_only = ON;");
-      this.database = candidate;
-      this.databaseBytes = updated;
-      this.records = records;
-      this.groups = groups;
+      await this.saveDatabase(candidate, records, updated);
       return result;
-    } finally {
-      if (this.database !== candidate) candidate.close();
-      this.importing = false;
-      if (this.closePending) this.close();
-    }
+    });
   }
 
   async deleteEntry(entry: { kind: "image" | "group"; id: string }): Promise<{ deleted: number; shared: number; failedFiles: number }> {
-    if (this.importing) throw new Error("Wait for the library update to finish.");
+    if (this.updating) throw new Error("Wait for the library update to finish.");
     if (!this.database || this.root?.kind !== "directory" || !this.files.put || !this.files.remove) {
       throw new Error("Connect a writable image library folder first.");
     }
@@ -426,10 +384,8 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       throw new Error("Delete the entire group instead of an individual group image.");
     }
     const root = this.root;
-    const candidate = new this.sqlite.Database(this.database.export());
-    this.importing = true;
-    try {
-      candidate.run("PRAGMA foreign_keys = ON;");
+    const remove = this.files.remove.bind(this.files);
+    return this.updateDatabase(this.database, async candidate => {
       const sharedIds = new Set(this.groups.filter(other => other.id !== group?.id).flatMap(other => other.images.map(image => image.id)));
       const members = [...new Map((group?.images ?? [image!]).map(image => [image.id, image])).values()];
       const removed = members.filter(image => !sharedIds.has(image.id));
@@ -438,45 +394,22 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
         if (this.hasTags) candidate.run("DELETE FROM image_tags WHERE image_id = ?;", [Number(image.id)]);
         candidate.run("DELETE FROM images WHERE id = ?;", [Number(image.id)]);
       }
-      try {
-        const wal = await this.files.get(root, `${this.databasePath}-wal`);
-        if (wal.size) throw new Error("The library has pending SQLite WAL data. Close its writer and reload before deleting images.");
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
-      }
-      const current = new Uint8Array(await (await this.files.get(root, this.databasePath)).arrayBuffer());
-      if (current.length !== this.databaseBytes.length || current.some((value, index) => value !== this.databaseBytes[index])) {
-        throw new Error("The library changed on disk. Reload before deleting images.");
-      }
       const records = new Map(this.records);
       for (const image of removed) records.delete(image.id);
-      const groups = readGroups(candidate, records);
-      const updated = new Uint8Array(candidate.export());
-      await this.files.put(root, this.databasePath, new Blob([updated]));
-      this.database.close();
-      candidate.run("PRAGMA query_only = ON;");
-      this.database = candidate;
-      this.databaseBytes = updated;
-      this.records = records;
-      this.groups = groups;
-      this.tagNames = [...new Set([...records.values()].flatMap(image => [...image.tags]))].sort();
+      await this.saveDatabase(candidate, records, new Uint8Array(candidate.export()));
       let failedFiles = 0;
       for (const image of removed) {
         for (const path of new Set([image.path, `images/${image.source}/${image.sha256}`])) {
-          try { await this.files.remove(root, path); }
+          try { await remove(root, path); }
           catch { failedFiles += 1; }
         }
       }
       return { deleted: removed.length, shared: members.length - removed.length, failedFiles };
-    } finally {
-      if (this.database !== candidate) candidate.close();
-      this.importing = false;
-      if (this.closePending) this.close();
-    }
+    });
   }
 
   close(): void {
-    if (this.importing) { this.closePending = true; return; }
+    if (this.updating) { this.closePending = true; return; }
     this.closePending = false;
     this.database?.close();
     this.database = undefined;
@@ -484,5 +417,46 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     this.records.clear();
     this.groups = [];
     this.tagNames = [];
+  }
+
+  private async findFile(root: FileRoot, path: string): Promise<File | undefined> {
+    try { return await this.files.get(root, path); }
+    catch (error) {
+      if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
+    }
+  }
+
+  private async updateDatabase<T>(database: Database, edit: (candidate: Database) => Promise<T>): Promise<T> {
+    const candidate = new this.sqlite.Database(database.export());
+    this.updating = true;
+    try {
+      candidate.run("PRAGMA foreign_keys = ON;");
+      return await edit(candidate);
+    } finally {
+      if (this.database !== candidate) candidate.close();
+      this.updating = false;
+      if (this.closePending) this.close();
+    }
+  }
+
+  private async saveDatabase(candidate: Database, records: Map<string, ImageSummary>, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+    const { root, database, files } = this;
+    if (!root || !database || !files.put) throw new Error("Connect a writable image library folder first.");
+    if ((await this.findFile(root, `${this.databasePath}-wal`))?.size) {
+      throw new Error("The library has pending SQLite WAL data. Close its writer and reload before saving changes.");
+    }
+    const current = new Uint8Array(await (await this.files.get(root, this.databasePath)).arrayBuffer());
+    if (current.length !== this.databaseBytes.length || current.some((value, index) => value !== this.databaseBytes[index])) {
+      throw new Error("The library changed on disk. Reload before saving changes.");
+    }
+    const groups = readGroups(candidate, records);
+    await files.put(root, this.databasePath, new Blob([bytes]));
+    database.close();
+    candidate.run("PRAGMA query_only = ON;");
+    this.database = candidate;
+    this.databaseBytes = bytes;
+    this.records = records;
+    this.groups = groups;
+    this.tagNames = [...new Set([...records.values()].flatMap(image => [...image.tags]))].sort();
   }
 }
