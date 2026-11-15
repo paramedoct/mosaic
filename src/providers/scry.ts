@@ -148,10 +148,9 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
     typeof created_at !== "string" || !Number.isFinite(Date.parse(created_at))) {
     throw new Error("The images table contains invalid metadata.");
   }
-  const extension = imageExtensions[mime_type.toLowerCase()];
   return {
     id: String(id), subject, source, sha256,
-    path: `images/${sha256}${extension ? `.${extension}` : ""}`,
+    path: `images/${sha256}`,
     tags: [], mimeType: mime_type, byteSize: byte_size, createdAt: created_at,
   };
 }
@@ -308,8 +307,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   async readImage(id: string): Promise<Blob> {
     const image = this.records.get(id);
     if (!image || !this.root) throw new Error("Image not found.");
-    const file = await this.findFile(this.root, image.path) ??
-      await this.files.get(this.root, `images/${image.sha256}`);
+    const file = await this.files.get(this.root, image.path);
     return file.slice(0, file.size, image.mimeType);
   }
 
@@ -432,10 +430,8 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       await this.saveDatabase(candidate, records, new Uint8Array(candidate.export()));
       let failedFiles = 0;
       for (const image of removed) {
-        for (const path of new Set([image.path, `images/${image.sha256}`])) {
-          try { await remove(root, path); }
-          catch { failedFiles += 1; }
-        }
+        try { await remove(root, image.path); }
+        catch { failedFiles += 1; }
       }
       return { deleted: removed.length, shared: members.length - removed.length, failedFiles };
     });
