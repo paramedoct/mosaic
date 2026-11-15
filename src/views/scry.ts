@@ -79,7 +79,7 @@ function mount(container: HTMLElement): () => void {
   const connectionText = element("div");
   const mode = element("span", "local-images-mode", "NOT CONNECTED");
   const connectionName = element("strong", "", "No library connected");
-  const description = element("p", "library-hint", "Connect the image library root containing images/ and states/db. Folder connections are remembered automatically.");
+  const description = element("p", "library-hint", "Connect the image library root containing images/ and scry.db. Folder connections are remembered automatically.");
   connectionText.append(mode, connectionName, description);
   const connectionActions = element("div", "library-actions");
   const reconnect = button("Reconnect saved folder", () => { void run(async () => {
@@ -107,7 +107,7 @@ function mount(container: HTMLElement): () => void {
   status.setAttribute("role", "status");
   const dropzone = element("div", "local-images-dropzone");
   dropzone.append(element("strong", "", "Drop your image library folder here"),
-    element("p", "library-hint", "Drag the folder containing images/ and states/db from your file explorer to connect it directly."));
+    element("p", "library-hint", "Drag the folder containing images/ and scry.db from your file explorer to connect it directly."));
   dropzone.ondragover = event => {
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
@@ -279,10 +279,10 @@ function mount(container: HTMLElement): () => void {
     source = undefined;
     selectedTags.clear();
     tags.replaceChildren();
-    grid.replaceChildren(element("p", "library-empty", "Connect the image library folder containing images/ and states/db."));
+    grid.replaceChildren(element("p", "library-empty", "Connect the image library folder containing images/ and scry.db."));
     mode.textContent = "NOT CONNECTED";
     connectionName.textContent = "No library connected";
-    description.textContent = "Connect the image library root containing images/ and states/db. Folder connections are remembered automatically.";
+    description.textContent = "Connect the image library root containing images/ and scry.db. Folder connections are remembered automatically.";
     count.textContent = "";
     reload.disabled = true;
     connect.disabled = true;

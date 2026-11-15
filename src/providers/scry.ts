@@ -151,7 +151,7 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
   const extension = imageExtensions[mime_type.toLowerCase()];
   return {
     id: String(id), subject, source, sha256,
-    path: `images/${source}/${sha256}${extension ? `.${extension}` : ""}`,
+    path: `images/${sha256}${extension ? `.${extension}` : ""}`,
     tags: [], mimeType: mime_type, byteSize: byte_size, createdAt: created_at,
   };
 }
@@ -177,14 +177,10 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
 
   async connect(root: FileRoot): Promise<void> {
     if (this.updating) throw new Error("Wait for the library update to finish before reconnecting.");
-    let file: File | undefined;
-    let databasePath = "";
-    for (const path of ["states/db", "state/scry.db"]) {
-      file = await this.findFile(root, path);
-      if (file) { databasePath = path; break; }
-    }
+    const databasePath = "scry.db";
+    const file = await this.findFile(root, databasePath);
     if (!file) {
-      throw new Error("Choose the image library folder containing images/ and states/db.");
+      throw new Error("Choose the image library folder containing images/ and scry.db.");
     }
     if ((await this.findFile(root, `${databasePath}-wal`))?.size) {
       throw new Error("This library has pending SQLite WAL data. Close its writer and checkpoint the database before connecting.");
@@ -276,7 +272,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     const image = this.records.get(id);
     if (!image || !this.root) throw new Error("Image not found.");
     const file = await this.findFile(this.root, image.path) ??
-      await this.files.get(this.root, `images/${image.source}/${image.sha256}`);
+      await this.files.get(this.root, `images/${image.sha256}`);
     return file.slice(0, file.size, image.mimeType);
   }
 
@@ -399,7 +395,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       await this.saveDatabase(candidate, records, new Uint8Array(candidate.export()));
       let failedFiles = 0;
       for (const image of removed) {
-        for (const path of new Set([image.path, `images/${image.source}/${image.sha256}`])) {
+        for (const path of new Set([image.path, `images/${image.sha256}`])) {
           try { await remove(root, path); }
           catch { failedFiles += 1; }
         }

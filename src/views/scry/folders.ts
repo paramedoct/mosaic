@@ -23,7 +23,7 @@ export async function chooseDirectory(): Promise<FileSystemDirectoryHandle> {
 
 export async function droppedDirectory(items: readonly DataTransferItem[]): Promise<FileSystemDirectoryHandle> {
   const files = items.filter(item => item.kind === "file");
-  if (files.length !== 1) throw new Error("Drop one image library folder containing images/ and states/db.");
+  if (files.length !== 1) throw new Error("Drop one image library folder containing images/ and scry.db.");
   const item = files[0];
   if (!item.getAsFileSystemHandle) throw new Error("This browser cannot connect dropped folders. Use Connect image folder.");
   // Capture the handle before the drop event's data store becomes unavailable.
