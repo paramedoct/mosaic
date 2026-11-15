@@ -17,6 +17,13 @@ async function parentDirectory(directory: FileSystemDirectoryHandle, parts: read
 }
 
 export class FileTransport {
+  async mkdir(root: FileRoot, path: string): Promise<void> {
+    if (root.kind !== "directory") throw new Error("Connect a writable image library folder first.");
+    const parts = relativePath(path);
+    const directory = await parentDirectory(root.handle, parts, true);
+    await directory.getDirectoryHandle(parts[parts.length - 1], { create: true });
+  }
+
   async remove(root: FileRoot, path: string): Promise<void> {
     if (root.kind !== "directory") throw new Error("Connect a writable image library folder first.");
     const parts = relativePath(path);

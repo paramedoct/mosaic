@@ -157,7 +157,7 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
 }
 
 export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
-  private files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove">>;
+  private files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove" | "mkdir">>;
   private sqlite: SqlJsStatic;
   private database?: Database;
   private root?: FileRoot;
@@ -170,9 +170,46 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   private updating = false;
   private closePending = false;
 
-  constructor(files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove">>, sqlite: SqlJsStatic) {
+  constructor(files: Pick<FileTransport, "get"> & Partial<Pick<FileTransport, "put" | "remove" | "mkdir">>, sqlite: SqlJsStatic) {
     this.files = files;
     this.sqlite = sqlite;
+  }
+
+  async createLibrary(root: FileRoot): Promise<void> {
+    if (this.updating) throw new Error("A library update is already running.");
+    if (root.kind !== "directory" || !this.files.put || !this.files.mkdir) {
+      throw new Error("Choose a writable folder to create an image library.");
+    }
+    this.updating = true;
+    try {
+      for (const path of ["scry.db", "state/scry.db", "states/db"]) {
+        for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+          if (await this.findFile(root, `${path}${suffix}`)) {
+            throw new Error("This folder already contains a library database. Connect it or choose a new folder.");
+          }
+        }
+      }
+      const database = new this.sqlite.Database();
+      try {
+        database.run(`
+          CREATE TABLE images (
+            id INTEGER PRIMARY KEY,
+            subject TEXT NOT NULL CHECK(subject <> ''),
+            source TEXT NOT NULL CHECK(source <> ''),
+            sha256 TEXT NOT NULL UNIQUE CHECK(length(sha256) = 64 AND sha256 = lower(sha256)),
+            mime_type TEXT NOT NULL,
+            byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+          );
+          CREATE INDEX images_classification_idx ON images(subject, source);
+        `);
+        await this.files.mkdir(root, "images");
+        await this.files.put(root, "scry.db", new Blob([new Uint8Array(database.export())]));
+      } finally { database.close(); }
+    } finally {
+      this.updating = false;
+      if (this.closePending) this.close();
+    }
   }
 
   async connect(root: FileRoot): Promise<void> {
@@ -180,7 +217,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     const databasePath = "scry.db";
     const file = await this.findFile(root, databasePath);
     if (!file) {
-      throw new Error("Choose the image library folder containing images/ and scry.db.");
+      throw new Error("Choose the image library folder containing images/ and scry.db, or create a new library.");
     }
     if ((await this.findFile(root, `${databasePath}-wal`))?.size) {
       throw new Error("This library has pending SQLite WAL data. Close its writer and checkpoint the database before connecting.");

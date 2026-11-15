@@ -65,6 +65,12 @@ function mount(container: HTMLElement): () => void {
       if (!disposed) await connectDirectory(root);
     });
   }, "primary-button");
+  const createLibrary = button("Create image library", () => { void run(async () => {
+    status.textContent = "Choose or create a folder for the new image library…";
+    const root = await chooseDirectory("readwrite");
+    if (!disposed) await connectDirectory(root, true);
+  }); });
+  createLibrary.hidden = !window.showDirectoryPicker;
   const sessionFallback = button("Open folder for this session", () => sessionPicker.click());
   sessionFallback.hidden = !window.showDirectoryPicker;
   const reload = button("Reload library", () => {
@@ -73,13 +79,13 @@ function mount(container: HTMLElement): () => void {
   reload.disabled = true;
   const cancelConnection = button("Cancel connection", () => pendingConnection?.abort());
   cancelConnection.hidden = true;
-  actions.append(openSession, connect, sessionFallback, reload, sessionPicker, cancelConnection);
+  actions.append(openSession, createLibrary, connect, sessionFallback, reload, sessionPicker, cancelConnection);
   header.append(heading, actions);
   const connection = element("section", "local-images-connection");
   const connectionText = element("div");
   const mode = element("span", "local-images-mode", "NOT CONNECTED");
   const connectionName = element("strong", "", "No library connected");
-  const description = element("p", "library-hint", "Connect the image library root containing images/ and scry.db. Folder connections are remembered automatically.");
+  const description = element("p", "library-hint", "Connect a library containing images/ and scry.db, or create a library in a new folder. Folder connections are remembered automatically.");
   connectionText.append(mode, connectionName, description);
   const connectionActions = element("div", "library-actions");
   const reconnect = button("Reconnect saved folder", () => { void run(async () => {
@@ -279,10 +285,10 @@ function mount(container: HTMLElement): () => void {
     source = undefined;
     selectedTags.clear();
     tags.replaceChildren();
-    grid.replaceChildren(element("p", "library-empty", "Connect the image library folder containing images/ and scry.db."));
+    grid.replaceChildren(element("p", "library-empty", "Connect an image library folder or create a new library."));
     mode.textContent = "NOT CONNECTED";
     connectionName.textContent = "No library connected";
-    description.textContent = "Connect the image library root containing images/ and scry.db. Folder connections are remembered automatically.";
+    description.textContent = "Connect a library containing images/ and scry.db, or create a library in a new folder. Folder connections are remembered automatically.";
     count.textContent = "";
     reload.disabled = true;
     connect.disabled = true;
@@ -291,13 +297,16 @@ function mount(container: HTMLElement): () => void {
     importPanel.hidden = true;
   }
 
-  async function useSource(next: FileConnection, isCurrent = () => true, signal?: AbortSignal): Promise<void> {
+  async function useSource(next: FileConnection, isCurrent = () => true, signal?: AbortSignal, create = false): Promise<void> {
     status.textContent = "Starting SQLite…";
     const sqlite = await waitFor(loadSqlite(), "SQLite did not finish starting. Try reconnecting the folder.", 15000, signal);
     if (disposed || !isCurrent()) return;
-    status.textContent = "Reading library database…";
+    status.textContent = create ? "Creating image library…" : "Reading library database…";
     const candidate = new ScryProvider(files, sqlite);
-    const pending = candidate.connect(next.root);
+    const pending = (async () => {
+      if (create) await candidate.createLibrary(next.root);
+      await candidate.connect(next.root);
+    })();
     try { await waitFor(pending, "The browser did not finish reading the library database. Try reconnecting the folder.", 15000, signal); }
     catch (error) {
       candidate.close();
@@ -347,8 +356,8 @@ function mount(container: HTMLElement): () => void {
     }
   }
 
-  async function connectDirectory(root: FileSystemDirectoryHandle): Promise<void> {
-    await connecting(signal => useSource({ name: root.name, root: { kind: "directory", handle: root } }, () => !signal.aborted, signal));
+  async function connectDirectory(root: FileSystemDirectoryHandle, create = false): Promise<void> {
+    await connecting(signal => useSource({ name: root.name, root: { kind: "directory", handle: root } }, () => !signal.aborted, signal, create));
     if (!disposed && source?.root.kind === "directory" && source.root.handle === root) await rememberFolder(root);
   }
 
@@ -477,7 +486,7 @@ function mount(container: HTMLElement): () => void {
     if (busy || disposed) return;
     operation += 1;
     busy = true;
-    const controls = [connect, openSession, sessionFallback, reload, reconnect, forget, addImages, importSubject, importSource, importFiles, deleteImage];
+    const controls = [connect, openSession, createLibrary, sessionFallback, reload, reconnect, forget, addImages, importSubject, importSource, importFiles, deleteImage];
     controls.forEach(control => { control.disabled = true; });
     status.textContent = "Reading library…";
     try { await action(); }

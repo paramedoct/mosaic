@@ -14,11 +14,11 @@ export function waitFor<T>(pending: Promise<T>, message: string, timeout: number
   });
 }
 
-export async function chooseDirectory(): Promise<FileSystemDirectoryHandle> {
+export async function chooseDirectory(mode: "read" | "readwrite" = "read"): Promise<FileSystemDirectoryHandle> {
   if (!window.showDirectoryPicker) {
     throw new Error("This browser does not support remembered folder connections. Use the session folder picker.");
   }
-  return window.showDirectoryPicker({ id: "local-images-library", mode: "read" });
+  return window.showDirectoryPicker({ id: "local-images-library", mode });
 }
 
 export async function droppedDirectory(items: readonly DataTransferItem[]): Promise<FileSystemDirectoryHandle> {
