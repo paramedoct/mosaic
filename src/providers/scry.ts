@@ -150,7 +150,7 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
   }
   return {
     id: String(id), subject, source, sha256,
-    path: `images/${sha256}`,
+    path: `images/${sha256}.sha256`,
     tags: [], mimeType: mime_type, byteSize: byte_size, createdAt: created_at,
   };
 }
