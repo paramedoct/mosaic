@@ -1,4 +1,5 @@
 import type { View } from "../types";
+import { setAction } from "../icons";
 import { ScryProvider, loadSqlite, type ImageGroup, type ImageSummary } from "../providers/scry";
 import { FileTransport, type FileRoot } from "../transports/file";
 import { chooseDirectory, droppedDirectory, hasReadAccess, requestReadAccess, savedFolder, waitFor } from "./scry/folders";
@@ -14,7 +15,7 @@ function bytes(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function mount(container: HTMLElement): () => void {
+function mount(container: HTMLElement, tools: HTMLElement): () => void {
   let disposed = false;
   let busy = false;
   let operation = 0;
@@ -32,11 +33,12 @@ function mount(container: HTMLElement): () => void {
   const selectedTags = new Set<string>();
   const thumbnailUrls = new Set<string>();
   const page = element("section", "library-view local-images-view");
-  const header = element("header", "library-header");
-  const heading = element("div");
-  heading.append(element("p", "library-eyebrow", "LOCAL IMAGE LIBRARY"), element("h1", "", "Local Images"),
-    element("p", "library-description", "Explore your original images, right where they live."));
-  const actions = element("div", "library-actions");
+  const toolbar = element("div", "scry-toolbar");
+  const connectionToggle = button("", () => setConnectionOpen(!connectionDialog.open), "scry-tool-button");
+  setAction(connectionToggle, "library", "Library settings");
+  const importToggle = button("", () => setImportOpen(true), "scry-tool-button");
+  setAction(importToggle, "addImages", "Add images");
+  importToggle.disabled = true;
   const connect = button("Remember folder connection", () => { void run(async () => {
     if (source?.root.kind !== "directory") return;
     await rememberFolder(source.root.handle);
@@ -53,7 +55,7 @@ function mount(container: HTMLElement): () => void {
       try {
         const name = selected[0].webkitRelativePath.split("/")[0] || "Selected files";
         await useSource({ name, root: { kind: "selection", files: selected } });
-        if (!disposed) status.textContent = "Folder opened for this session. Original images stay on disk; select the folder again after reopening Mosaic.";
+        if (!disposed) status.textContent = "";
       } finally { sessionPicker.value = ""; }
     });
   };
@@ -73,21 +75,29 @@ function mount(container: HTMLElement): () => void {
   createLibrary.hidden = !window.showDirectoryPicker;
   const sessionFallback = button("Open folder for this session", () => sessionPicker.click());
   sessionFallback.hidden = !window.showDirectoryPicker;
-  const reload = button("Reload library", () => {
+  const reload = button("", () => {
     if (source) void run(() => useSource(source!));
-  });
+  }, "scry-tool-button");
+  setAction(reload, "refresh", "Reload library");
   reload.disabled = true;
   const cancelConnection = button("Cancel connection", () => pendingConnection?.abort());
   cancelConnection.hidden = true;
-  actions.append(openSession, createLibrary, connect, sessionFallback, reload, sessionPicker, cancelConnection);
-  header.append(heading, actions);
-  const connection = element("section", "local-images-connection");
-  const connectionText = element("div");
-  const mode = element("span", "local-images-mode", "NOT CONNECTED");
+  const localCopy = button("", downloadHtml, "scry-tool-button");
+  setAction(localCopy, "save", "Save a local HTML copy");
+  localCopy.hidden = window.location.protocol !== "file:" || !window.location.hostname;
+  toolbar.append(connectionToggle, importToggle, reload, localCopy);
+  tools.append(toolbar);
+
+  const connectionDialog = element("dialog", "library-dialog");
+  connectionDialog.setAttribute("aria-labelledby", "scry-library-title");
+  const connectionHeader = element("header", "library-dialog-header");
+  const connectionTitle = element("h2", "", "Library");
+  connectionTitle.id = "scry-library-title";
+  const closeConnection = button("", () => setConnectionOpen(false));
+  setAction(closeConnection, "close", "Close");
+  connectionHeader.append(connectionTitle, closeConnection);
   const connectionName = element("strong", "", "No library connected");
-  const description = element("p", "library-hint", "Connect a library containing images/ and scry.db, or create a library in a new folder. Folder connections are remembered automatically.");
-  connectionText.append(mode, connectionName, description);
-  const connectionActions = element("div", "library-actions");
+  const connectionActions = element("div", "library-dialog-actions");
   const reconnect = button("Reconnect saved folder", () => { void run(async () => {
     const root = savedConnection;
     if (!root) return;
@@ -107,22 +117,27 @@ function mount(container: HTMLElement): () => void {
       : "Folder connection forgotten. Original files were not changed.";
   }); });
   reconnect.hidden = forget.hidden = true;
-  connectionActions.append(reconnect, forget);
-  connection.append(connectionText, connectionActions);
+  connectionActions.append(openSession, createLibrary, connect, sessionFallback, reconnect, forget, cancelConnection, sessionPicker);
+  connectionDialog.append(connectionHeader, connectionName, connectionActions);
+  connectionDialog.onclick = event => {
+    if (event.target !== connectionDialog) return;
+    const bounds = connectionDialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+      event.clientY < bounds.top || event.clientY > bounds.bottom) setConnectionOpen(false);
+  };
   const status = element("p", "library-status");
   status.setAttribute("role", "status");
-  const dropzone = element("div", "local-images-dropzone");
-  dropzone.append(element("strong", "", "Drop your image library folder here"),
-    element("p", "library-hint", "Drag the folder containing images/ and scry.db from your file explorer to connect it directly."));
-  dropzone.ondragover = event => {
+  page.ondragover = event => {
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
-    dropzone.classList.toggle("is-dragging", !busy);
+    page.classList.toggle("is-dragging", !busy);
   };
-  dropzone.ondragleave = () => dropzone.classList.remove("is-dragging");
-  dropzone.ondrop = event => {
+  page.ondragleave = event => {
+    if (!page.contains(event.relatedTarget as Node | null)) page.classList.remove("is-dragging");
+  };
+  page.ondrop = event => {
     event.preventDefault();
-    dropzone.classList.remove("is-dragging");
+    page.classList.remove("is-dragging");
     if (busy || disposed || !event.dataTransfer) return;
     const directory = droppedDirectory([...event.dataTransfer.items]);
     void run(async () => {
@@ -131,8 +146,15 @@ function mount(container: HTMLElement): () => void {
       if (!disposed) await connectDirectory(root);
     });
   };
+  const importDialog = element("dialog", "library-dialog");
+  importDialog.setAttribute("aria-labelledby", "scry-import-title");
+  const importHeader = element("header", "library-dialog-header");
+  const importTitle = element("h2", "", "Add images");
+  importTitle.id = "scry-import-title";
+  const closeImport = button("", () => setImportOpen(false));
+  setAction(closeImport, "close", "Close");
+  importHeader.append(importTitle, closeImport);
   const importPanel = element("form", "library-import");
-  importPanel.hidden = true;
   const importSubject = input("Subject");
   const importSource = input("Source");
   const importSubjects = element("datalist");
@@ -155,8 +177,14 @@ function mount(container: HTMLElement): () => void {
     importControls.append(field);
   }
   importControls.append(addImages);
-  importPanel.append(element("h2", "", "Add images"), importControls, importSubjects, importSources,
-    element("p", "library-hint", "Each ZIP becomes one image group, sorted by filename. Identical images are stored once and shared between groups. ZIP files may include folders; other files are ignored."));
+  importPanel.append(importControls, importSubjects, importSources);
+  importDialog.append(importHeader, importPanel);
+  importDialog.onclick = event => {
+    if (event.target !== importDialog) return;
+    const bounds = importDialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right ||
+      event.clientY < bounds.top || event.clientY > bounds.bottom) setImportOpen(false);
+  };
   importPanel.onsubmit = event => {
     event.preventDefault();
     const current = provider;
@@ -171,37 +199,39 @@ function mount(container: HTMLElement): () => void {
       if (disposed) return;
       importFiles.value = "";
       await refresh();
+      setImportOpen(false);
       status.textContent = `${result.added} images added · ${result.skipped} duplicates reused or skipped.` +
         (result.groupsAdded !== undefined ? ` ${result.groupsAdded} groups added · ${result.groupsSkipped} existing groups skipped.` : "");
     });
   };
-  const locationNotice = element("div", "library-actions local-images-copy");
-  locationNotice.hidden = window.location.protocol !== "file:" || !window.location.hostname;
-  locationNotice.append(button("Save a local HTML copy", downloadHtml));
   const filters = element("div", "library-filters");
   const search = input("Search images", "search");
   const subjects = select("Filter subject");
   const sources = select("Filter source");
-  const order = select("Image order");
+  let oldestFirst = false;
+  const order = button("", () => {
+    oldestFirst = !oldestFirst;
+    order.classList.toggle("is-oldest", oldestFirst);
+    setAction(order, "sort", oldestFirst ? "Oldest first" : "Newest first");
+    void refresh();
+  }, "library-filter-action");
+  setAction(order, "sort", "Newest first");
   options(subjects, [["", "All subjects"]]);
   options(sources, [["", "All sources"]]);
-  options(order, [["newest", "Newest first"], ["oldest", "Oldest first"]]);
   const count = element("span", "library-count");
-  for (const control of [subjects, sources, order]) control.onchange = () => { void refresh(); };
+  for (const control of [subjects, sources]) control.onchange = () => { void refresh(); };
   search.oninput = () => { void refresh(); };
   filters.append(search, subjects, sources, order, count);
   const tags = element("div", "local-images-tags");
   tags.setAttribute("aria-label", "Filter tags");
   const grid = element("div", "image-grid");
   grid.setAttribute("aria-label", "Image collection");
-  const hint = element("p", "library-hint", "Images stay in the connected folder. Adding images requires folder write access; identical files are skipped using SHA-256.");
 
   const dialog = element("dialog", "image-dialog");
   dialog.setAttribute("aria-label", "Image viewer");
   const viewerHeader = element("header", "image-viewer-header");
-  const viewerTitle = element("h2");
-  const close = button("Close", () => dialog.close());
-  viewerHeader.append(viewerTitle, close);
+  const close = button("", () => dialog.close());
+  setAction(close, "close", "Close");
   const viewerBody = element("div", "image-viewer-body");
   const stage = element("div", "image-viewer-stage");
   const original = element("img", "image-original");
@@ -212,7 +242,7 @@ function mount(container: HTMLElement): () => void {
   const imageTags = element("div", "local-images-tags");
   const viewerStatus = element("p", "library-status");
   viewerStatus.setAttribute("role", "status");
-  const deleteImage = button("Delete image", () => {
+  const deleteImage = button("", () => {
     const current = provider;
     const root = source?.root;
     const image = viewerImages[activeIndex];
@@ -240,18 +270,22 @@ function mount(container: HTMLElement): () => void {
       }
     });
   }, "danger-button");
-  viewerHeader.insertBefore(deleteImage, close);
+  setAction(deleteImage, "trash", "Delete image");
+  viewerHeader.append(deleteImage, close);
   info.append(classification, properties, imageTags, viewerStatus);
   viewerBody.append(stage, info);
   const navigation = element("footer", "image-navigation");
-  const previous = button("← Previous", () => { void move(-1); });
+  const previous = button("", () => { void move(-1); });
+  setAction(previous, "previous", "Previous");
   const position = element("span");
-  const next = button("Next →", () => { void move(1); });
-  const zoom = button("Actual size", () => {
+  const next = button("", () => { void move(1); });
+  setAction(next, "next", "Next");
+  const zoom = button("", () => {
     const actual = stage.classList.toggle("actual-size");
     stage.scrollTo(0, 0);
-    zoom.textContent = actual ? "Fit image" : "Actual size";
+    setAction(zoom, "maximize", actual ? "Fit image" : "Actual size");
   });
+  setAction(zoom, "maximize", "Actual size");
   navigation.append(previous, position, next, zoom);
   dialog.append(viewerHeader, viewerBody, navigation);
   dialog.addEventListener("keydown", event => {
@@ -267,7 +301,7 @@ function mount(container: HTMLElement): () => void {
     viewerGroup = undefined;
     activeIndex = 0;
   });
-  page.append(header, connection, dropzone, locationNotice, importPanel, filters, tags, status, grid, hint, dialog);
+  page.append(filters, tags, status, grid, connectionDialog, importDialog, dialog);
   container.replaceChildren(page);
   const observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) {
@@ -282,25 +316,35 @@ function mount(container: HTMLElement): () => void {
     thumbnailUrls.clear();
   }
 
+  function setConnectionOpen(open: boolean): void {
+    if (open && !connectionDialog.open) connectionDialog.showModal();
+    else if (!open && connectionDialog.open) connectionDialog.close();
+  }
+
+  function setImportOpen(open: boolean): void {
+    if (open && !importDialog.open && source?.root.kind === "directory") {
+      importDialog.showModal();
+      importSubject.focus();
+    } else if (!open && importDialog.open) importDialog.close();
+  }
+
   function clearLibrary(): void {
     request += 1;
     dialog.close();
+    setImportOpen(false);
     releaseThumbnails();
     provider?.close();
     provider = undefined;
     source = undefined;
     selectedTags.clear();
     tags.replaceChildren();
-    grid.replaceChildren(element("p", "library-empty", "Connect an image library folder or create a new library."));
-    mode.textContent = "NOT CONNECTED";
+    grid.replaceChildren();
     connectionName.textContent = "No library connected";
-    description.textContent = "Connect a library containing images/ and scry.db, or create a library in a new folder. Folder connections are remembered automatically.";
     count.textContent = "";
     reload.disabled = true;
+    importToggle.disabled = true;
     connect.disabled = true;
     connect.hidden = true;
-    dropzone.hidden = false;
-    importPanel.hidden = true;
   }
 
   async function useSource(next: FileConnection, isCurrent = () => true, signal?: AbortSignal, create = false): Promise<void> {
@@ -324,13 +368,8 @@ function mount(container: HTMLElement): () => void {
     provider = candidate;
     source = next;
     const isSession = next.root.kind === "selection";
-    mode.textContent = isSession ? "SESSION" : "CONNECTED";
     connectionName.textContent = next.name;
-    description.textContent = isSession
-        ? "Original image library folder opened for this session. Files are read-only and are not copied to browser storage."
-        : "Image library folder connected. You can add images with write access; image copies are not stored in the browser.";
-    importPanel.hidden = isSession;
-    dropzone.hidden = !isSession;
+    importToggle.disabled = isSession;
     connect.hidden = isSession || next.root.kind === "directory" && next.root.handle === savedConnection;
     reconnect.hidden = true;
     search.value = "";
@@ -340,7 +379,10 @@ function mount(container: HTMLElement): () => void {
     reload.disabled = false;
     connect.disabled = isSession;
     connect.title = isSession ? "This selection has no reusable folder handle and cannot be remembered without copying files." : "Remember the connected folder without selecting it again.";
-    if (!disposed) status.textContent = "Library connected.";
+    if (!disposed) {
+      status.textContent = "";
+      setConnectionOpen(false);
+    }
   }
 
   async function rememberFolder(root: FileSystemDirectoryHandle): Promise<void> {
@@ -351,9 +393,7 @@ function mount(container: HTMLElement): () => void {
       reconnect.hidden = true;
       forget.hidden = false;
       connect.hidden = true;
-      status.textContent = persistence === "tab"
-        ? "Library connected. Folder connection will be restored after refreshing this tab."
-        : "Library connected. Folder connection remembered.";
+      status.textContent = persistence === "tab" ? "Connection saved for this tab." : "";
     } catch (error) {
       if (!disposed) {
         connect.hidden = false;
@@ -404,8 +444,7 @@ function mount(container: HTMLElement): () => void {
     const token = ++viewerRequest;
     activeIndex = index;
     deleteImage.hidden = source?.root.kind !== "directory";
-    deleteImage.textContent = viewerGroup ? "Delete group" : "Delete image";
-    viewerTitle.textContent = viewerGroup?.subject ?? image.subject;
+    setAction(deleteImage, "trash", viewerGroup ? "Delete group" : "Delete image");
     classification.textContent = viewerGroup ? `${viewerGroup.subject} · ${viewerGroup.source}` : `${image.subject} · ${image.source}`;
     properties.textContent = `${image.mimeType} · ${bytes(image.byteSize)} · ${new Date(image.createdAt).toLocaleDateString()}`;
     imageTags.replaceChildren(...image.tags.map(tag => element("span", "local-images-tag", tag)));
@@ -414,7 +453,7 @@ function mount(container: HTMLElement): () => void {
     next.disabled = index === viewerImages.length - 1;
     stage.classList.remove("actual-size");
     stage.scrollTo(0, 0);
-    zoom.textContent = "Actual size";
+    setAction(zoom, "maximize", "Actual size");
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
     viewerUrl = undefined;
     original.removeAttribute("src");
@@ -440,7 +479,7 @@ function mount(container: HTMLElement): () => void {
     const token = ++request;
     try {
       const result = await current.fetch({ subject: subjects.value, source: sources.value, text: search.value,
-        tags: [...selectedTags], order: order.value as "oldest" | "newest" });
+        tags: [...selectedTags], order: oldestFirst ? "oldest" : "newest" });
       if (disposed || token !== request) return;
       const images = result.standaloneImages;
       const entries = [
@@ -448,7 +487,7 @@ function mount(container: HTMLElement): () => void {
         ...result.groups.map(group => ({ image: group.images[0], group, createdAt: group.createdAt, id: Number(group.id) })),
       ].sort((left, right) => {
         const compared = left.createdAt.localeCompare(right.createdAt) || left.id - right.id;
-        return order.value === "oldest" ? compared : -compared;
+        return oldestFirst ? compared : -compared;
       });
       options(subjects, [["", "All subjects"], ...result.subjects.map(value => [value, value] as [string, string])]);
       options(sources, [["", "All sources"], ...result.sources.map(value => [value, value] as [string, string])]);
@@ -462,7 +501,7 @@ function mount(container: HTMLElement): () => void {
         option.value = value;
         return option;
       }));
-      count.textContent = `${entries.length} items · ${result.total} images · ${bytes(result.byteSize)}`;
+      count.textContent = `${entries.length} / ${result.total}`;
       tags.replaceChildren(...result.tags.map(tag => {
         const chip = button(tag, () => {
           if (selectedTags.has(tag)) selectedTags.delete(tag); else selectedTags.add(tag);
@@ -471,7 +510,6 @@ function mount(container: HTMLElement): () => void {
         chip.setAttribute("aria-pressed", String(selectedTags.has(tag)));
         return chip;
       }));
-      if (!result.tags.length) tags.append(element("span", "library-hint", "This library uses the original subject and source classifications."));
       releaseThumbnails();
       grid.replaceChildren(...entries.map(({ image, group }) => {
         const card = button("", () => {
@@ -502,7 +540,8 @@ function mount(container: HTMLElement): () => void {
     if (busy || disposed) return;
     operation += 1;
     busy = true;
-    const controls = [connect, openSession, createLibrary, sessionFallback, reload, reconnect, forget, addImages, importSubject, importSource, importFiles, deleteImage];
+    const controls = [connectionToggle, importToggle, connect, openSession, createLibrary, sessionFallback,
+      reload, reconnect, forget, addImages, importSubject, importSource, importFiles, deleteImage, order];
     controls.forEach(control => { control.disabled = true; });
     status.textContent = "Reading library…";
     try { await action(); }
@@ -513,6 +552,7 @@ function mount(container: HTMLElement): () => void {
       if (!disposed) {
         controls.forEach(control => { control.disabled = false; });
         reload.disabled = !provider;
+        importToggle.disabled = source?.root.kind !== "directory";
         connect.disabled = source?.root.kind !== "directory";
       }
     }
@@ -524,7 +564,10 @@ function mount(container: HTMLElement): () => void {
     const isCurrent = () => !disposed && !expired && token === operation;
     status.textContent = "Looking for a saved folder connection…";
     restoreTimer = setTimeout(() => {
-      if (isCurrent()) status.textContent = "Saved folder restoration did not respond. Connect a folder directly to try again.";
+      if (isCurrent()) {
+        status.textContent = "Saved folder restoration did not respond. Connect a folder directly to try again.";
+        setConnectionOpen(true);
+      }
       expired = true;
     }, 10000);
     try {
@@ -533,7 +576,6 @@ function mount(container: HTMLElement): () => void {
       savedConnection = saved;
       if (savedConnection) {
         connectionName.textContent = savedConnection.name;
-        mode.textContent = "SAVED FOLDER";
         reconnect.hidden = forget.hidden = false;
         const allowed = await hasReadAccess(savedConnection);
         if (!isCurrent()) return;
@@ -541,13 +583,17 @@ function mount(container: HTMLElement): () => void {
           await useSource({ name: savedConnection.name, root: { kind: "directory", handle: savedConnection } }, isCurrent);
           return;
         }
-        dropzone.hidden = true;
         status.textContent = "Saved folder found. Reconnect it to approve read access.";
+        setConnectionOpen(true);
         return;
       }
-      status.textContent = "Connect an image folder to open your library.";
+      status.textContent = "";
+      setConnectionOpen(true);
     } catch (error) {
-      if (isCurrent()) status.textContent = `Could not restore the folder connection. ${errorMessage(error)}`;
+      if (isCurrent()) {
+        status.textContent = `Could not restore the folder connection. ${errorMessage(error)}`;
+        setConnectionOpen(true);
+      }
     } finally { clearTimeout(restoreTimer); }
   }
 
@@ -560,10 +606,13 @@ function mount(container: HTMLElement): () => void {
     request += 1;
     viewerRequest += 1;
     dialog.close();
+    setConnectionOpen(false);
+    setImportOpen(false);
     releaseThumbnails();
     provider?.close();
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
+    toolbar.remove();
   };
 }
 
-export default { title: "Local Images", category: "Images", icon: "images", mount } satisfies View;
+export default { title: "Scry", category: "Images", icon: "images", mount } satisfies View;
