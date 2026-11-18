@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "fflate": "^0.8.3",
+    "lucide": "^1.75.0",
     "sql.js": "^1.15.2"
   }
 }
