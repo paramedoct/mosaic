@@ -135,6 +135,12 @@ function mount(container: HTMLElement): () => void {
   importPanel.hidden = true;
   const importSubject = input("Subject");
   const importSource = input("Source");
+  const importSubjects = element("datalist");
+  const importSources = element("datalist");
+  importSubjects.id = "local-image-subjects";
+  importSources.id = "local-image-sources";
+  importSubject.setAttribute("list", importSubjects.id);
+  importSource.setAttribute("list", importSources.id);
   importSubject.required = importSource.required = true;
   const importFiles = input("Images or ZIP files to add", "file");
   importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
@@ -149,7 +155,7 @@ function mount(container: HTMLElement): () => void {
     importControls.append(field);
   }
   importControls.append(addImages);
-  importPanel.append(element("h2", "", "Add images"), importControls,
+  importPanel.append(element("h2", "", "Add images"), importControls, importSubjects, importSources,
     element("p", "library-hint", "Each ZIP becomes one image group, sorted by filename. Identical images are stored once and shared between groups. ZIP files may include folders; other files are ignored."));
   importPanel.onsubmit = event => {
     event.preventDefault();
@@ -446,6 +452,16 @@ function mount(container: HTMLElement): () => void {
       });
       options(subjects, [["", "All subjects"], ...result.subjects.map(value => [value, value] as [string, string])]);
       options(sources, [["", "All sources"], ...result.sources.map(value => [value, value] as [string, string])]);
+      importSubjects.replaceChildren(...result.subjects.map(value => {
+        const option = element("option");
+        option.value = value;
+        return option;
+      }));
+      importSources.replaceChildren(...result.sources.map(value => {
+        const option = element("option");
+        option.value = value;
+        return option;
+      }));
       count.textContent = `${entries.length} items · ${result.total} images · ${bytes(result.byteSize)}`;
       tags.replaceChildren(...result.tags.map(tag => {
         const chip = button(tag, () => {
