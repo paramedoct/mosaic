@@ -1,6 +1,6 @@
 .library-view { position: relative; width: 100%; min-height: calc(100dvh - 16px); }
 .library-view button { font-size: 13px; }
-.library-view input:not([type="checkbox"]), .library-view select {
+.library-view input:not([type="checkbox"]), .library-view select, .library-view textarea {
   min-width: 0;
   border: 1px solid #303742;
   border-radius: 8px;
@@ -74,7 +74,8 @@
 .library-import { margin: 0; }
 .library-import .library-actions { display: flex; flex-direction: column; gap: 12px; }
 .image-import-field { display: flex; flex-direction: column; gap: 6px; color: #98a4b0; font-size: 12px; }
-.image-import-field input { width: 100%; }
+.image-import-field input, .image-import-field textarea { width: 100%; }
+.image-import-field textarea { min-height: 88px; resize: vertical; }
 .library-import .primary-button { width: 100%; margin-top: 4px; }
 
 .local-images-view.is-dragging::after {

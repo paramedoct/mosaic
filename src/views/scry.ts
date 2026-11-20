@@ -2,6 +2,7 @@ import type { View } from "../types";
 import { setAction } from "../icons";
 import { ScryProvider, loadSqlite, type ImageGroup, type ImageSummary } from "../providers/scry";
 import { FileTransport, type FileRoot } from "../transports/file";
+import { downloadImages, downloadUrls } from "./scry/downloads";
 import { chooseDirectory, droppedDirectory, hasReadAccess, requestReadAccess, savedFolder, waitFor } from "./scry/folders";
 import { button, downloadHtml, element, errorMessage, input, options, select } from "./scry/ui";
 import "./scry/style.css";
@@ -170,11 +171,16 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const importFiles = input("Images or ZIP files to add", "file");
   importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
   importFiles.multiple = true;
-  importFiles.required = true;
+  const importUrls = element("textarea");
+  importUrls.placeholder = "One HTTPS download URL per line";
+  importUrls.setAttribute("aria-label", "Image or ZIP download URLs");
+  importUrls.rows = 4;
+  importFiles.onchange = importUrls.oninput = () => importUrls.setCustomValidity("");
   const addImages = element("button", "primary-button", "Add images");
   addImages.type = "submit";
   const importControls = element("div", "library-actions");
-  for (const [label, control] of [["Subject", importSubject], ["Source", importSource], ["Images", importFiles]] as const) {
+  for (const [label, control] of [["Subject", importSubject], ["Source", importSource],
+    ["Images", importFiles], ["Download URLs", importUrls]] as const) {
     const field = element("label", "image-import-field", label);
     field.append(control);
     importControls.append(field);
@@ -193,14 +199,25 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     const current = provider;
     const root = source?.root;
     const selected = importFiles.files ? [...importFiles.files] : [];
+    const urls = downloadUrls(importUrls.value);
     if (busy || !current || root?.kind !== "directory") return;
+    if (!selected.length && !urls.length) {
+      importUrls.setCustomValidity("Choose local files or enter download URLs.");
+      importUrls.reportValidity();
+      return;
+    }
+    importUrls.setCustomValidity("");
     const permission = root.handle.requestPermission({ mode: "readwrite" });
     void run(async () => {
       if (await permission !== "granted") throw new Error("Write access was not granted. No images were added.");
+      const downloaded = await downloadImages(urls, completed => {
+        if (urls.length) status.textContent = `Downloading ${completed} / ${urls.length}…`;
+      });
       status.textContent = "Opening files, hashing and adding images…";
-      const result = await current.addImages(selected, importSubject.value, importSource.value);
+      const result = await current.addImages([...selected, ...downloaded], importSubject.value, importSource.value);
       if (disposed) return;
       importFiles.value = "";
+      importUrls.value = "";
       await refresh();
       setImportOpen(false);
       status.textContent = `${result.added} images added · ${result.skipped} duplicates reused or skipped.` +
@@ -567,7 +584,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     operation += 1;
     busy = true;
     const controls = [connectionToggle, importToggle, connect, openSession, createLibrary, sessionFallback,
-      reload, reconnect, forget, addImages, importSubject, importSource, importFiles, deleteImage, order];
+      reload, reconnect, forget, addImages, importSubject, importSource, importFiles, importUrls, deleteImage, order];
     controls.forEach(control => { control.disabled = true; });
     status.textContent = "Reading library…";
     try { await action(); }
