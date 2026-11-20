@@ -30,6 +30,9 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   let viewerGroup: ImageGroup | undefined;
   let activeIndex = 0;
   let viewerUrl: string | undefined;
+  let wheelDistance = 0;
+  let wheelLocked = false;
+  let wheelReset: ReturnType<typeof setTimeout> | undefined;
   const selectedTags = new Set<string>();
   const thumbnailUrls = new Set<string>();
   const page = element("section", "library-view local-images-view");
@@ -296,8 +299,27 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     if (event.key === "ArrowLeft") { event.preventDefault(); void move(-1); }
     if (event.key === "ArrowRight") { event.preventDefault(); void move(1); }
   });
+  stage.addEventListener("wheel", event => {
+    if (!viewerGroup || stage.classList.contains("actual-size")) return;
+    event.preventDefault();
+    clearTimeout(wheelReset);
+    wheelReset = setTimeout(() => {
+      wheelDistance = 0;
+      wheelLocked = false;
+    }, 160);
+    if (wheelLocked) return;
+    const dominantDelta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? stage.clientHeight : 1;
+    wheelDistance += dominantDelta * scale;
+    if (Math.abs(wheelDistance) < 40) return;
+    wheelLocked = true;
+    void move(wheelDistance > 0 ? 1 : -1);
+  }, { passive: false });
   dialog.addEventListener("close", () => {
     viewerRequest += 1;
+    clearTimeout(wheelReset);
+    wheelDistance = 0;
+    wheelLocked = false;
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
     viewerUrl = undefined;
     original.removeAttribute("src");
@@ -607,6 +629,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     disposed = true;
     pendingConnection?.abort();
     clearTimeout(restoreTimer);
+    clearTimeout(wheelReset);
     request += 1;
     viewerRequest += 1;
     dialog.close();
