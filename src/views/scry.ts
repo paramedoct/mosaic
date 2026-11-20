@@ -229,7 +229,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
 
   const dialog = element("dialog", "image-dialog");
   dialog.setAttribute("aria-label", "Image viewer");
-  const viewerHeader = element("header", "image-viewer-header");
   const close = button("", () => dialog.close());
   setAction(close, "close", "Close");
   const viewerBody = element("div", "image-viewer-body");
@@ -271,7 +270,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     });
   }, "danger-button");
   setAction(deleteImage, "trash", "Delete image");
-  viewerHeader.append(deleteImage, close);
   info.append(classification, properties, imageTags, viewerStatus);
   viewerBody.append(stage, info);
   const navigation = element("footer", "image-navigation");
@@ -286,8 +284,14 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     setAction(zoom, "maximize", actual ? "Fit image" : "Actual size");
   });
   setAction(zoom, "maximize", "Actual size");
-  navigation.append(previous, position, next, zoom);
-  dialog.append(viewerHeader, viewerBody, navigation);
+  const destructiveActions = element("div", "image-navigation-actions");
+  destructiveActions.append(deleteImage);
+  const pagingActions = element("div", "image-navigation-paging");
+  pagingActions.append(previous, position, next);
+  const viewerActions = element("div", "image-navigation-actions image-navigation-viewer-actions");
+  viewerActions.append(zoom, close);
+  navigation.append(destructiveActions, pagingActions, viewerActions);
+  dialog.append(viewerBody, navigation);
   dialog.addEventListener("keydown", event => {
     if (event.key === "ArrowLeft") { event.preventDefault(); void move(-1); }
     if (event.key === "ArrowRight") { event.preventDefault(); void move(1); }
