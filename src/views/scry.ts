@@ -577,13 +577,13 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const metadataSummary = element("div", "image-import-metadata-summary");
   metadataSummary.append(sourceInput.summary, tagInput.summary);
   importSummary.append(importQueue, metadataSummary);
-  importPicker.append(importSummary, inputs, metadataFields);
+  importPicker.append(inputs, metadataFields);
   const closeImport = button("", () => setImportOpen(false), "image-import-close");
   setAction(closeImport, "close", "Close");
   const importDialogActions = element("div", "image-import-dialog-actions");
   importDialogActions.append(closeImport, addImages);
   const importTop = element("div", "image-import-top");
-  importTop.append(importPicker, importDialogActions);
+  importTop.append(importSummary, importPicker, importDialogActions);
   importFields.append(importTop, importMessage);
   const importDialog = element("dialog", "image-import-dialog");
   importDialog.setAttribute("aria-label", "Add images");
