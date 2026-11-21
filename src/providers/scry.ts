@@ -12,7 +12,14 @@ export interface ImageQuery {
   source?: string;
   text?: string;
   tags?: readonly string[];
+  terms?: readonly ImageSearchTerm[];
   order?: "oldest" | "newest";
+}
+
+export interface ImageSearchTerm {
+  field: "text" | "subject" | "source" | "tag";
+  value: string;
+  exclude: boolean;
 }
 
 export interface ImageSummary {
@@ -47,6 +54,23 @@ export interface ImageGroup {
 }
 
 interface StoredImageGroup extends ImageGroup { sha256: string; }
+
+function matchesSearch(
+  item: Pick<ImageSummary, "subject" | "source">, members: readonly ImageSummary[], terms: readonly ImageSearchTerm[],
+): boolean {
+  return terms.every(({ field, value, exclude }) => {
+    let matches: boolean;
+    if (field === "subject" || field === "source") matches = item[field].toLowerCase() === value;
+    else {
+      matches = members.some(member => member.tags.some(tag => tag.toLowerCase() === value));
+      if (field === "text" && !matches) {
+        matches = [item.subject, item.source].some(text => text.toLowerCase().includes(value)) ||
+          members.some(member => [member.subject, member.source, member.sha256].some(text => text.toLowerCase().includes(value)));
+      }
+    }
+    return matches !== exclude;
+  });
+}
 
 export interface ImageImportResult {
   added: number;
@@ -280,14 +304,17 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     const ids = rows(this.database,
       `SELECT images.id FROM images ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY created_at ${direction}, images.id ${direction};`, values);
     const all = [...this.records.values()];
-    const images = ids.map(row => this.records.get(String(row.id))!);
+    const terms = (query.terms ?? []).map(term => ({ ...term, value: term.value.toLowerCase() }));
+    const images = ids.map(row => this.records.get(String(row.id))!)
+      .filter(image => !terms.length || matchesSearch(image, [image], terms));
     const groupedIds = new Set(this.groups.flatMap(group => group.images.map(image => image.id)));
     const groups = this.groups.filter(group => {
       if (query.subject && group.subject !== query.subject || query.source && group.source !== query.source) return false;
       const text = query.text?.trim().toLowerCase();
       if (text && !`${group.subject} ${group.source}`.toLowerCase().includes(text) &&
         !group.images.some(image => `${image.subject} ${image.source} ${image.sha256}`.toLowerCase().includes(text))) return false;
-      return (query.tags ?? []).every(tag => group.images.some(image => image.tags.includes(tag)));
+      return (query.tags ?? []).every(tag => group.images.some(image => image.tags.includes(tag))) &&
+        matchesSearch(group, group.images, terms);
     }).sort((left, right) => {
       const compared = left.createdAt.localeCompare(right.createdAt) || Number(left.id) - Number(right.id);
       return query.order === "oldest" ? compared : -compared;

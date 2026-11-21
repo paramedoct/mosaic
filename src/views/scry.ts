@@ -1,10 +1,11 @@
 import type { View } from "../types";
-import { setAction } from "../icons";
+import { icon, setAction } from "../icons";
 import { ScryProvider, loadSqlite, type ImageGroup, type ImageSummary } from "../providers/scry";
 import { FileTransport, type FileRoot } from "../transports/file";
 import { downloadImages, downloadUrls } from "./scry/downloads";
 import { chooseDirectory, droppedDirectory, hasReadAccess, requestReadAccess, savedFolder, waitFor } from "./scry/folders";
-import { button, downloadHtml, element, errorMessage, input, options, select } from "./scry/ui";
+import { imageSearchChoices, parseImageSearch } from "./scry/search";
+import { button, downloadHtml, element, errorMessage, input } from "./scry/ui";
 import "./scry/style.css";
 
 const files = new FileTransport();
@@ -14,6 +15,60 @@ function bytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function suggestedInput(
+  field: HTMLInputElement, choices: (value: string) => readonly { label: string; value: string }[], edited?: () => void,
+) {
+  const wrapper = element("div", "scry-suggested-input");
+  const suggestions = element("div", "scry-suggestions");
+  suggestions.setAttribute("role", "group");
+  suggestions.setAttribute("aria-label", `${field.placeholder} suggestions`);
+  wrapper.append(field, suggestions);
+  function render(): void {
+    suggestions.replaceChildren(...choices(field.value).map(({ label, value }) => button(label, () => {
+      field.value = value;
+      field.focus();
+      if (label.endsWith(":") && edited && value.endsWith(":")) render();
+      else suggestions.replaceChildren();
+      edited?.();
+    })));
+  }
+  field.onclick = render;
+  field.oninput = () => {
+    render();
+    edited?.();
+  };
+  wrapper.addEventListener("focusout", event => {
+    if (!wrapper.contains(event.relatedTarget as Node | null)) suggestions.replaceChildren();
+  });
+  wrapper.onkeydown = event => {
+    if (event.key === "Escape" && suggestions.childElementCount) {
+      event.preventDefault();
+      field.focus();
+      suggestions.replaceChildren();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    if (!suggestions.childElementCount && event.target === field && event.key === "ArrowDown") render();
+    const choices = [...suggestions.querySelectorAll("button")];
+    const index = choices.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "ArrowDown" ? choices[index + 1] : choices[index - 1] ?? field;
+    if (!choices.length || !next) return;
+    event.preventDefault();
+    next.focus();
+  };
+  return wrapper;
+}
+
+function importChoices(field: HTMLInputElement) {
+  let values: readonly string[] = [];
+  const wrapper = suggestedInput(field, value => {
+    const query = value.trim().toLowerCase();
+    return values.filter(choice => choice !== value && choice.toLowerCase().includes(query)).slice(0, 5)
+      .map(choice => ({ label: choice, value: choice }));
+  });
+  return { wrapper, update(next: readonly string[]) { values = next; } };
 }
 
 function mount(container: HTMLElement, tools: HTMLElement): () => void {
@@ -34,7 +89,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   let wheelDistance = 0;
   let wheelLocked = false;
   let wheelReset: ReturnType<typeof setTimeout> | undefined;
-  const selectedTags = new Set<string>();
   const thumbnailUrls = new Set<string>();
   const page = element("section", "library-view local-images-view");
   const toolbar = element("div", "scry-toolbar");
@@ -161,6 +215,8 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const importPanel = element("form", "library-import");
   const importSubject = input("Subject");
   const importSource = input("Source");
+  const subjectChoices = importChoices(importSubject);
+  const sourceChoices = importChoices(importSource);
   const importSubjects = element("datalist");
   const importSources = element("datalist");
   importSubjects.id = "local-image-subjects";
@@ -225,9 +281,13 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     });
   };
   const filters = element("div", "library-filters");
-  const search = input("Search images", "search");
-  const subjects = select("Filter subject");
-  const sources = select("Filter source");
+  const search = input("Search images or tags", "search");
+  search.autocomplete = "off";
+  search.title = 'Combine terms, subject:, source: or tag:. Use quotes for spaces and - to exclude.';
+  let searchFacets: Parameters<typeof imageSearchChoices>[1] = { subject: [], source: [], tag: [] };
+  const searchField = suggestedInput(search, value => imageSearchChoices(value, searchFacets), () => { void refresh(); });
+  searchField.classList.add("library-search");
+  searchField.prepend(icon("search"));
   let oldestFirst = false;
   const order = button("", () => {
     oldestFirst = !oldestFirst;
@@ -236,14 +296,10 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     void refresh();
   }, "library-filter-action");
   setAction(order, "sort", "Newest first");
-  options(subjects, [["", "All subjects"]]);
-  options(sources, [["", "All sources"]]);
   const count = element("span", "library-count");
-  for (const control of [subjects, sources]) control.onchange = () => { void refresh(); };
-  search.oninput = () => { void refresh(); };
-  filters.append(search, subjects, sources, order, count);
-  const tags = element("div", "local-images-tags");
-  tags.setAttribute("aria-label", "Filter tags");
+  filters.append(searchField, count, order);
+  const libraryControls = element("header", "library-controls");
+  libraryControls.append(filters);
   const grid = element("div", "image-grid");
   grid.setAttribute("aria-label", "Image collection");
 
@@ -344,7 +400,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     viewerGroup = undefined;
     activeIndex = 0;
   });
-  page.append(filters, tags, status, grid, connectionDialog, importDialog, dialog);
+  page.append(libraryControls, grid, status, connectionDialog, importDialog, dialog);
   container.replaceChildren(page);
   const observer = new IntersectionObserver(entries => {
     for (const entry of entries) if (entry.isIntersecting) {
@@ -379,8 +435,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     provider?.close();
     provider = undefined;
     source = undefined;
-    selectedTags.clear();
-    tags.replaceChildren();
+    searchFacets = { subject: [], source: [], tag: [] };
     grid.replaceChildren();
     connectionName.textContent = "No library connected";
     count.textContent = "";
@@ -416,8 +471,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     connect.hidden = isSession || next.root.kind === "directory" && next.root.handle === savedConnection;
     reconnect.hidden = true;
     search.value = "";
-    options(subjects, [["", "All subjects"]]);
-    options(sources, [["", "All sources"]]);
     await refresh();
     reload.disabled = false;
     connect.disabled = isSession;
@@ -521,8 +574,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     if (!current || disposed) return;
     const token = ++request;
     try {
-      const result = await current.fetch({ subject: subjects.value, source: sources.value, text: search.value,
-        tags: [...selectedTags], order: oldestFirst ? "oldest" : "newest" });
+      const result = await current.fetch({ terms: parseImageSearch(search.value), order: oldestFirst ? "oldest" : "newest" });
       if (disposed || token !== request) return;
       const images = result.standaloneImages;
       const entries = [
@@ -532,27 +584,10 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
         const compared = left.createdAt.localeCompare(right.createdAt) || left.id - right.id;
         return oldestFirst ? compared : -compared;
       });
-      options(subjects, [["", "All subjects"], ...result.subjects.map(value => [value, value] as [string, string])]);
-      options(sources, [["", "All sources"], ...result.sources.map(value => [value, value] as [string, string])]);
-      importSubjects.replaceChildren(...result.subjects.map(value => {
-        const option = element("option");
-        option.value = value;
-        return option;
-      }));
-      importSources.replaceChildren(...result.sources.map(value => {
-        const option = element("option");
-        option.value = value;
-        return option;
-      }));
-      count.textContent = `${entries.length} / ${result.total}`;
-      tags.replaceChildren(...result.tags.map(tag => {
-        const chip = button(tag, () => {
-          if (selectedTags.has(tag)) selectedTags.delete(tag); else selectedTags.add(tag);
-          void refresh();
-        }, "local-images-tag");
-        chip.setAttribute("aria-pressed", String(selectedTags.has(tag)));
-        return chip;
-      }));
+      searchFacets = { subject: result.subjects, source: result.sources, tag: result.tags };
+      subjectChoices.update(result.subjects);
+      sourceChoices.update(result.sources);
+      count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
       releaseThumbnails();
       grid.replaceChildren(...entries.map(({ image, group }) => {
         const card = button("", () => {
