@@ -61,13 +61,30 @@ function suggestedInput(
   return wrapper;
 }
 
-function importChoices(field: HTMLInputElement) {
+function importChoices(field: HTMLInputElement, edited?: () => void) {
   let values: readonly string[] = [];
   const wrapper = suggestedInput(field, value => {
     const query = value.trim().toLowerCase();
     return values.filter(choice => choice !== value && choice.toLowerCase().includes(query)).slice(0, 5)
       .map(choice => ({ label: choice, value: choice }));
-  });
+  }, edited);
+  return { wrapper, update(next: readonly string[]) { values = next; } };
+}
+
+function parseTags(value: string): string[] {
+  return [...new Map(value.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean)
+    .map(tag => [tag.toLowerCase(), tag] as const)).values()];
+}
+
+function importTagChoices(field: HTMLInputElement) {
+  let values: readonly string[] = [];
+  const wrapper = suggestedInput(field, value => {
+    const parts = value.split(",");
+    const query = parts.at(-1)?.trim().toLowerCase() ?? "";
+    const selected = new Set(parseTags(parts.slice(0, -1).join(",")).map(tag => tag.toLowerCase()));
+    return values.filter(choice => !selected.has(choice.toLowerCase()) && choice.toLowerCase().includes(query)).slice(0, 5)
+      .map(choice => ({ label: choice, value: [...parts.slice(0, -1).map(part => part.trim()).filter(Boolean), choice].join(", ") }));
+  }, () => field.setCustomValidity(""));
   return { wrapper, update(next: readonly string[]) { values = next; } };
 }
 
@@ -210,11 +227,11 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const importFields = element("fieldset", "image-import-fields");
   importFields.disabled = true;
   importPanel.append(importFields);
-  const importSubject = input("Subject");
+  const importTags = input("Tags (comma-separated)");
   const importSource = input("Source");
-  const subjectChoices = importChoices(importSubject);
+  const tagChoices = importTagChoices(importTags);
   const sourceChoices = importChoices(importSource);
-  importSubject.required = importSource.required = true;
+  importTags.required = importSource.required = true;
   const importFiles = input("Images or ZIP files to add", "file");
   importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
   importFiles.multiple = true;
@@ -382,7 +399,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     importMessage.textContent = "";
   };
   const metadataFields = element("div", "image-import-metadata");
-  metadataFields.append(subjectChoices.wrapper, sourceChoices.wrapper);
+  metadataFields.append(tagChoices.wrapper, sourceChoices.wrapper);
   const importPicker = element("div", "image-import-picker");
   importPicker.append(importQueue, inputs);
   const closeImport = button("", () => setImportOpen(false), "image-import-close");
@@ -429,7 +446,9 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       return;
     }
     importMessage.textContent = "";
-    if (!importSubject.reportValidity() || !importSource.reportValidity()) return;
+    const tags = parseTags(importTags.value);
+    importTags.setCustomValidity(tags.length ? "" : "Enter at least one tag.");
+    if (!importTags.reportValidity() || !importSource.reportValidity()) return;
     const permission = root.handle.requestPermission({ mode: "readwrite" });
     void run(async () => {
       status.textContent = "";
@@ -471,7 +490,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       renderQueue();
       let result;
       try {
-        result = await current.addImages([...selected, ...downloaded], importSubject.value, importSource.value);
+        result = await current.addImages([...selected, ...downloaded], tags, importSource.value);
       } catch (error) {
         importMessage.textContent = errorMessage(error);
         queuedItems.forEach(item => { item.state = "error"; item.error = "Could not add"; });
@@ -492,8 +511,8 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const filters = element("div", "library-filters");
   const search = input("Search images or tags", "search");
   search.autocomplete = "off";
-  search.title = 'Combine terms, subject:, source: or tag:. Use quotes for spaces and - to exclude.';
-  let searchFacets: Parameters<typeof imageSearchChoices>[1] = { subject: [], source: [], tag: [] };
+  search.title = 'Combine terms, source: or tag:. Use quotes for spaces and - to exclude.';
+  let searchFacets: Parameters<typeof imageSearchChoices>[1] = { source: [], tag: [] };
   const searchField = suggestedInput(search, value => imageSearchChoices(value, searchFacets), () => { void refresh(); });
   searchField.classList.add("library-search");
   searchField.prepend(icon("search"));
@@ -644,7 +663,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     provider?.close();
     provider = undefined;
     source = undefined;
-    searchFacets = { subject: [], source: [], tag: [] };
+    searchFacets = { source: [], tag: [] };
     grid.replaceChildren();
     connectionName.textContent = "No library connected";
     count.textContent = "";
@@ -752,7 +771,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     activeIndex = index;
     deleteImage.hidden = source?.root.kind !== "directory";
     setAction(deleteImage, "trash", viewerGroup ? "Delete group" : "Delete image");
-    classification.textContent = viewerGroup ? `${viewerGroup.subject} · ${viewerGroup.source}` : `${image.subject} · ${image.source}`;
+    classification.textContent = viewerGroup?.source ?? image.source;
     properties.textContent = `${image.mimeType} · ${bytes(image.byteSize)} · ${new Date(image.createdAt).toLocaleDateString()}`;
     imageTags.replaceChildren(...image.tags.map(tag => element("span", "local-images-tag", tag)));
     position.textContent = `${index + 1} / ${viewerImages.length}`;
@@ -764,7 +783,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
     viewerUrl = undefined;
     original.removeAttribute("src");
-    original.alt = image.subject;
+    original.alt = image.tags.join(", ") || image.source;
     viewerStatus.textContent = "Reading original image…";
     if (!dialog.open) dialog.showModal();
     try {
@@ -795,8 +814,8 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
         const compared = left.createdAt.localeCompare(right.createdAt) || left.id - right.id;
         return oldestFirst ? compared : -compared;
       });
-      searchFacets = { subject: result.subjects, source: result.sources, tag: result.tags };
-      subjectChoices.update(result.subjects);
+      searchFacets = { source: result.sources, tag: result.tags };
+      tagChoices.update(result.tags);
       sourceChoices.update(result.sources);
       count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
       releaseThumbnails();
@@ -806,9 +825,10 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
           viewerImages = group?.images ?? images;
           void showImage(group ? 0 : images.findIndex(candidate => candidate.id === image.id));
         }, group ? "image-card image-group-card" : "image-card");
-        card.setAttribute("aria-label", group ? `View ${group.subject}, ${group.images.length} images` : `View ${image.subject}`);
+        const label = image.tags.join(", ") || image.source;
+        card.setAttribute("aria-label", group ? `View ${label}, ${group.images.length} images` : `View ${label}`);
         const thumbnail = element("img");
-        thumbnail.alt = image.subject;
+        thumbnail.alt = label;
         thumbnail.loading = "lazy";
         thumbnail.dataset.id = image.id;
         thumbnail.onerror = () => { thumbnail.alt = "Image format could not be displayed"; };

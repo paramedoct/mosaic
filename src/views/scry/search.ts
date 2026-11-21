@@ -1,13 +1,13 @@
 import type { ImageSearchTerm } from "../../providers/scry";
 
-const fields = ["subject", "source", "tag"] as const;
+const fields = ["source", "tag"] as const;
 type Facets = Record<typeof fields[number], readonly string[]>;
 const tokenPattern = /(?:[^\s"\\]|\\.|"(?:[^"\\]|\\.)*(?:"|$))+/g;
 
 function readToken(token: string): ImageSearchTerm {
   const exclude = token.startsWith("-");
   const body = exclude ? token.slice(1) : token;
-  const prefix = /^(subject|source|tag):/i.exec(body);
+  const prefix = /^(source|tag):/i.exec(body);
   const field = fields.find(value => value === prefix?.[1].toLowerCase()) ?? "text";
   const raw = body.slice(prefix?.[0].length ?? 0);
   const quoted = /^"((?:[^"\\]|\\.)*)"?$/.exec(raw);

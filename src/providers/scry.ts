@@ -8,7 +8,6 @@ let engine: Promise<SqlJsStatic> | undefined;
 export function loadSqlite(): Promise<SqlJsStatic> { return engine ??= initialize(); }
 
 export interface ImageQuery {
-  subject?: string;
   source?: string;
   text?: string;
   tags?: readonly string[];
@@ -17,7 +16,7 @@ export interface ImageQuery {
 }
 
 export interface ImageSearchTerm {
-  field: "text" | "subject" | "source" | "tag";
+  field: "text" | "source" | "tag";
   value: string;
   exclude: boolean;
 }
@@ -26,7 +25,6 @@ export interface ImageSummary {
   id: string;
   sha256: string;
   path: string;
-  subject: string;
   source: string;
   tags: readonly string[];
   mimeType: string;
@@ -38,7 +36,6 @@ export interface ImageCollection {
   images: readonly ImageSummary[];
   standaloneImages: readonly ImageSummary[];
   groups: readonly ImageGroup[];
-  subjects: readonly string[];
   sources: readonly string[];
   tags: readonly string[];
   total: number;
@@ -47,7 +44,6 @@ export interface ImageCollection {
 
 export interface ImageGroup {
   id: string;
-  subject: string;
   source: string;
   createdAt: string;
   images: readonly ImageSummary[];
@@ -56,16 +52,16 @@ export interface ImageGroup {
 interface StoredImageGroup extends ImageGroup { sha256: string; }
 
 function matchesSearch(
-  item: Pick<ImageSummary, "subject" | "source">, members: readonly ImageSummary[], terms: readonly ImageSearchTerm[],
+  item: Pick<ImageSummary, "source">, members: readonly ImageSummary[], terms: readonly ImageSearchTerm[],
 ): boolean {
   return terms.every(({ field, value, exclude }) => {
     let matches: boolean;
-    if (field === "subject" || field === "source") matches = item[field].toLowerCase() === value;
+    if (field === "source") matches = item.source.toLowerCase() === value;
     else {
       matches = members.some(member => member.tags.some(tag => tag.toLowerCase() === value));
       if (field === "text" && !matches) {
-        matches = [item.subject, item.source].some(text => text.toLowerCase().includes(value)) ||
-          members.some(member => [member.subject, member.source, member.sha256].some(text => text.toLowerCase().includes(value)));
+        matches = item.source.toLowerCase().includes(value) ||
+          members.some(member => [member.source, member.sha256].some(text => text.toLowerCase().includes(value)));
       }
     }
     return matches !== exclude;
@@ -97,14 +93,13 @@ function readGroups(database: Database, records: Map<string, ImageSummary>): Sto
     members.push(image);
     items.set(id, members);
   }
-  return rows(database, "SELECT id, subject, source, sha256, created_at FROM mosaic_image_groups;").map(row => {
+  return rows(database, "SELECT id, source, sha256, created_at FROM mosaic_image_groups;").map(row => {
     if (typeof row.id !== "number" || !Number.isSafeInteger(row.id) || row.id < 1 ||
-      typeof row.subject !== "string" || !row.subject.trim() ||
       typeof row.source !== "string" || !row.source.trim() || typeof row.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(row.sha256) ||
       typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at))) {
       throw new Error("The image groups contain invalid metadata.");
     }
-    return { id: String(row.id), subject: row.subject, source: row.source,
+    return { id: String(row.id), source: row.source,
       sha256: row.sha256, createdAt: row.created_at, images: items.get(String(row.id)) ?? [] };
   }).filter(group => group.images.length);
 }
@@ -164,7 +159,8 @@ function rows(database: Database, sql: string, parameters: SqlValue[] = []): Rec
 function parseImage(record: Record<string, SqlValue>): ImageSummary {
   const { id, subject, source, sha256, mime_type, byte_size, created_at } = record;
   if (typeof id !== "number" || !Number.isSafeInteger(id) || id < 1 ||
-    typeof subject !== "string" || !subject.trim() || typeof source !== "string" || !source.trim() ||
+    subject !== undefined && (typeof subject !== "string" || !subject.trim()) ||
+    typeof source !== "string" || !source.trim() ||
     source === "." || source === ".." || /[/\\\0]/.test(source) ||
     typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256) ||
     typeof mime_type !== "string" || !/^image\/[a-z0-9.+-]+$/i.test(mime_type) ||
@@ -173,9 +169,9 @@ function parseImage(record: Record<string, SqlValue>): ImageSummary {
     throw new Error("The images table contains invalid metadata.");
   }
   return {
-    id: String(id), subject, source, sha256,
+    id: String(id), source, sha256,
     path: `images/${sha256}.sha256`,
-    tags: [], mimeType: mime_type, byteSize: byte_size, createdAt: created_at,
+    tags: typeof subject === "string" ? [subject] : [], mimeType: mime_type, byteSize: byte_size, createdAt: created_at,
   };
 }
 
@@ -188,6 +184,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
   private groups: StoredImageGroup[] = [];
   private tagNames: string[] = [];
   private hasTags = false;
+  private hasLegacySubject = false;
   private databasePath = "";
   private databaseBytes = new Uint8Array();
   private updating = false;
@@ -217,14 +214,23 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
         database.run(`
           CREATE TABLE images (
             id INTEGER PRIMARY KEY,
-            subject TEXT NOT NULL CHECK(subject <> ''),
             source TEXT NOT NULL CHECK(source <> ''),
             sha256 TEXT NOT NULL UNIQUE CHECK(length(sha256) = 64 AND sha256 = lower(sha256)),
             mime_type TEXT NOT NULL,
             byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
           );
-          CREATE INDEX images_classification_idx ON images(subject, source);
+          CREATE INDEX images_source_idx ON images(source);
+          CREATE TABLE tags (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE CHECK(name <> '')
+          );
+          CREATE TABLE image_tags (
+            image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+            tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            PRIMARY KEY (image_id, tag_id)
+          );
+          CREATE INDEX image_tags_tag_idx ON image_tags(tag_id);
         `);
         await this.files.mkdir(root, "images");
         await this.files.put(root, "scry.db", new Blob([new Uint8Array(database.export())]));
@@ -250,18 +256,21 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     const database = new this.sqlite.Database(new Uint8Array(bytes));
     try {
       database.run("PRAGMA query_only = ON;");
-      const images = rows(database, "SELECT id, subject, source, sha256, mime_type, byte_size, created_at FROM images;").map(parseImage);
+      const imageColumns = rows(database, "PRAGMA table_info(images);");
+      const hasLegacySubject = imageColumns.some(column => column.name === "subject");
+      const images = rows(database,
+        `SELECT id, ${hasLegacySubject ? "subject, " : ""}source, sha256, mime_type, byte_size, created_at FROM images;`).map(parseImage);
       const records = new Map(images.map(image => [image.id, image]));
       const tables = new Set(rows(database, "SELECT name FROM sqlite_master WHERE type = 'table';").map(row => row.name));
       const hasTags = tables.has("tags") && tables.has("image_tags");
-      const names = new Set<string>();
+      const names = new Set(images.flatMap(image => [...image.tags]));
       if (hasTags) {
         const imageTags = new Map<string, Set<string>>();
         for (const row of rows(database, "SELECT image_tags.image_id, tags.name FROM image_tags JOIN tags ON tags.id = image_tags.tag_id;")) {
           if (typeof row.name !== "string" || !row.name.trim()) throw new Error("The tags table contains invalid names.");
           const id = String(row.image_id);
           if (!records.has(id)) continue;
-          const tags = imageTags.get(id) ?? new Set<string>();
+          const tags = imageTags.get(id) ?? new Set(records.get(id)!.tags);
           tags.add(row.name);
           names.add(row.name);
           imageTags.set(id, tags);
@@ -276,6 +285,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       this.groups = groups;
       this.tagNames = [...names].sort();
       this.hasTags = hasTags;
+      this.hasLegacySubject = hasLegacySubject;
       this.databasePath = databasePath;
       this.databaseBytes = new Uint8Array(bytes);
     } catch (error) {
@@ -288,31 +298,25 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     if (!this.database) throw new Error("Connect an image library first.");
     const conditions: string[] = [];
     const values: SqlValue[] = [];
-    if (query.subject) { conditions.push("images.subject = ?"); values.push(query.subject); }
     if (query.source) { conditions.push("images.source = ?"); values.push(query.source); }
-    if (query.text?.trim()) {
-      conditions.push("instr(lower(images.subject || ' ' || images.source || ' ' || images.sha256), lower(?)) > 0");
-      values.push(query.text.trim());
-    }
-    for (const tag of new Set(query.tags ?? [])) {
-      conditions.push(this.hasTags
-        ? "EXISTS (SELECT 1 FROM image_tags JOIN tags ON tags.id = image_tags.tag_id WHERE image_tags.image_id = images.id AND tags.name = ?)"
-        : "0");
-      if (this.hasTags) values.push(tag);
-    }
     const direction = query.order === "oldest" ? "ASC" : "DESC";
     const ids = rows(this.database,
       `SELECT images.id FROM images ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""} ORDER BY created_at ${direction}, images.id ${direction};`, values);
     const all = [...this.records.values()];
     const terms = (query.terms ?? []).map(term => ({ ...term, value: term.value.toLowerCase() }));
     const images = ids.map(row => this.records.get(String(row.id))!)
+      .filter(image => (query.tags ?? []).every(tag => image.tags.includes(tag)))
+      .filter(image => {
+        const text = query.text?.trim().toLowerCase();
+        return !text || [image.source, image.sha256, ...image.tags].some(value => value.toLowerCase().includes(text));
+      })
       .filter(image => !terms.length || matchesSearch(image, [image], terms));
     const groupedIds = new Set(this.groups.flatMap(group => group.images.map(image => image.id)));
     const groups = this.groups.filter(group => {
-      if (query.subject && group.subject !== query.subject || query.source && group.source !== query.source) return false;
+      if (query.source && group.source !== query.source) return false;
       const text = query.text?.trim().toLowerCase();
-      if (text && !`${group.subject} ${group.source}`.toLowerCase().includes(text) &&
-        !group.images.some(image => `${image.subject} ${image.source} ${image.sha256}`.toLowerCase().includes(text))) return false;
+      if (text && !group.source.toLowerCase().includes(text) && !group.images.some(image =>
+        [image.source, image.sha256, ...image.tags].some(value => value.toLowerCase().includes(text)))) return false;
       return (query.tags ?? []).every(tag => group.images.some(image => image.tags.includes(tag))) &&
         matchesSearch(group, group.images, terms);
     }).sort((left, right) => {
@@ -323,7 +327,6 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       images,
       standaloneImages: images.filter(image => !groupedIds.has(image.id)),
       groups,
-      subjects: [...new Set([...all.map(image => image.subject), ...this.groups.map(group => group.subject)])].sort(),
       sources: [...new Set([...all.map(image => image.source), ...this.groups.map(group => group.source)])].sort(),
       tags: this.tagNames,
       total: all.length,
@@ -338,28 +341,60 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     return file.slice(0, file.size, image.mimeType);
   }
 
-  async addImages(files: readonly File[], subject: string, source: string): Promise<ImageImportResult> {
+  async addImages(files: readonly File[], tags: readonly string[], source: string): Promise<ImageImportResult> {
     if (this.updating) throw new Error("A library update is already running.");
     if (!this.database || !this.root || this.root.kind !== "directory" || !this.files.put) {
       throw new Error("Connect a writable image library folder first.");
     }
-    subject = subject.trim();
+    const existingTags = new Map(this.tagNames.map(tag => [tag.toLowerCase(), tag]));
+    tags = [...new Map(tags.map(tag => {
+      const trimmed = tag.trim();
+      return [trimmed.toLowerCase(), existingTags.get(trimmed.toLowerCase()) ?? trimmed] as const;
+    }).filter(([key]) => key)).values()];
     source = source.trim();
-    if (!subject || !source || source === "." || source === ".." || /[/\\\0]/.test(source)) {
-      throw new Error("Enter a subject and a source without path separators.");
+    if (!tags.length || !source || source === "." || source === ".." || /[/\\\0]/.test(source)) {
+      throw new Error("Enter at least one tag and a source without path separators.");
     }
     if (!files.length) throw new Error("Choose images to add.");
     if (!globalThis.crypto?.subtle) throw new Error("Image hashing is unavailable. Open Mosaic from a local drive or localhost.");
     const root = this.root;
     const put = this.files.put.bind(this.files);
     return this.updateDatabase(this.database, async candidate => {
-      const known = new Map([...this.records.values()].map(image => [image.sha256, image]));
+      const records = new Map<string, ImageSummary>([...this.records]
+        .map(([id, image]) => [id, { ...image, tags: [...image.tags] }]));
+      const known = new Map([...records.values()].map(image => [image.sha256, image]));
       const pending: { file: File; image: ImageSummary }[] = [];
       let skipped = 0;
       let groupsAdded = 0;
       let groupsSkipped = 0;
       const hasArchives = files.some(isImageArchive);
       let schemaChanged = false;
+      let tagsChanged = false;
+      candidate.run(`
+        CREATE TABLE IF NOT EXISTS tags (
+          id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE CHECK(name <> '')
+        );
+        CREATE TABLE IF NOT EXISTS image_tags (
+          image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+          tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+          PRIMARY KEY (image_id, tag_id)
+        );
+        CREATE INDEX IF NOT EXISTS image_tags_tag_idx ON image_tags(tag_id);
+      `);
+      if (!this.hasTags) schemaChanged = true;
+      const attachTags = (image: ImageSummary, values: readonly string[]): void => {
+        const merged = new Map(image.tags.map(tag => [tag.toLowerCase(), tag]));
+        for (const tag of values) {
+          if (!merged.has(tag.toLowerCase())) tagsChanged = true;
+          candidate.run("INSERT OR IGNORE INTO tags (name) VALUES (?);", [tag]);
+          const tagId = rows(candidate, "SELECT id FROM tags WHERE name = ?;", [tag])[0]?.id;
+          if (typeof tagId !== "number") throw new Error(`Could not save tag: ${tag}`);
+          candidate.run("INSERT OR IGNORE INTO image_tags (image_id, tag_id) VALUES (?, ?);", [Number(image.id), tagId]);
+          merged.set(tag.toLowerCase(), tag);
+        }
+        image.tags = [...merged.values()].sort();
+      };
+      for (const image of records.values()) attachTags(image, image.tags);
       for (const table of ["mosaic_image_groups", "mosaic_image_group_items"]) {
         if (rows(candidate, `PRAGMA table_info(${table});`).some(column => column.name === "name")) {
           candidate.run(`ALTER TABLE ${table} DROP COLUMN name;`);
@@ -368,7 +403,7 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       }
       if (hasArchives) candidate.run(`
         CREATE TABLE IF NOT EXISTS mosaic_image_groups (
-          id INTEGER PRIMARY KEY, subject TEXT NOT NULL, source TEXT NOT NULL,
+          id INTEGER PRIMARY KEY, source TEXT NOT NULL,
           sha256 TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS mosaic_image_group_items (
@@ -388,15 +423,25 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
           const existing = known.get(sha256);
           if (existing) {
             skipped += 1;
+            attachTags(existing, tags);
             manifest.push({ sha256, id: existing.id });
             continue;
           }
           if (!imageExtensions[file.type.toLowerCase()]) throw new Error(`Not a supported image: ${file.name}`);
           const createdAt = new Date().toISOString();
-          candidate.run("INSERT INTO images (subject, source, sha256, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?);",
-            [subject, source, sha256, file.type, file.size, createdAt]);
-          const image = parseImage(rows(candidate, "SELECT id, subject, source, sha256, mime_type, byte_size, created_at FROM images WHERE sha256 = ?;", [sha256])[0]);
+          if (this.hasLegacySubject) {
+            candidate.run("INSERT INTO images (subject, source, sha256, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?);",
+              [tags[0], source, sha256, file.type, file.size, createdAt]);
+          } else {
+            candidate.run("INSERT INTO images (source, sha256, mime_type, byte_size, created_at) VALUES (?, ?, ?, ?, ?);",
+              [source, sha256, file.type, file.size, createdAt]);
+          }
+          const image = parseImage(rows(candidate,
+            `SELECT id, ${this.hasLegacySubject ? "subject, " : ""}source, sha256, mime_type, byte_size, created_at FROM images WHERE sha256 = ?;`,
+            [sha256])[0]);
+          attachTags(image, tags);
           pending.push({ file, image });
+          records.set(image.id, image);
           known.set(sha256, image);
           manifest.push({ sha256, id: image.id });
         }
@@ -408,8 +453,15 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
             groupsSkipped += 1;
             continue;
           }
-          candidate.run("INSERT INTO mosaic_image_groups (subject, source, sha256, created_at) VALUES (?, ?, ?, ?);",
-            [subject, source, sha256, new Date().toISOString()]);
+          const groupHasLegacySubject = rows(candidate, "PRAGMA table_info(mosaic_image_groups);")
+            .some(column => column.name === "subject");
+          if (groupHasLegacySubject) {
+            candidate.run("INSERT INTO mosaic_image_groups (subject, source, sha256, created_at) VALUES (?, ?, ?, ?);",
+              [tags[0], source, sha256, new Date().toISOString()]);
+          } else {
+            candidate.run("INSERT INTO mosaic_image_groups (source, sha256, created_at) VALUES (?, ?, ?);",
+              [source, sha256, new Date().toISOString()]);
+          }
           const groupId = rows(candidate, "SELECT last_insert_rowid() AS id;")[0].id;
           manifest.forEach((item, position) => candidate.run(
             "INSERT INTO mosaic_image_group_items (group_id, image_id, position) VALUES (?, ?, ?);",
@@ -419,12 +471,10 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
       }
       const result: ImageImportResult = { added: pending.length, skipped };
       if (hasArchives) { result.groupsAdded = groupsAdded; result.groupsSkipped = groupsSkipped; }
-      if (!pending.length && !groupsAdded && !schemaChanged) return result;
+      if (!pending.length && !groupsAdded && !schemaChanged && !tagsChanged) return result;
       for (const { file, image } of pending) await put(root, image.path, file);
       const updated = new Uint8Array(candidate.export());
       if (updated.length > 64 * 1024 * 1024) throw new Error("The library metadata exceeds the 64 MB limit.");
-      const records = new Map(this.records);
-      for (const { image } of pending) records.set(image.id, image);
       await this.saveDatabase(candidate, records, updated);
       return result;
     });
@@ -473,6 +523,8 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     this.records.clear();
     this.groups = [];
     this.tagNames = [];
+    this.hasTags = false;
+    this.hasLegacySubject = false;
   }
 
   private async findFile(root: FileRoot, path: string): Promise<File | undefined> {
@@ -514,5 +566,6 @@ export class ScryProvider implements Provider<ImageQuery, ImageCollection> {
     this.records = records;
     this.groups = groups;
     this.tagNames = [...new Set([...records.values()].flatMap(image => [...image.tags]))].sort();
+    this.hasTags = true;
   }
 }
