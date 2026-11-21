@@ -20,11 +20,16 @@ import {
   Sun,
   Tag,
   Trash2,
-  Upload,
   X,
 } from "lucide";
 
 type IconDefinition = Parameters<typeof createElement>[0];
+
+const uploadIcon: IconDefinition = [
+  ["path", { d: "M12 16V4" }],
+  ["path", { d: "m7 9 5-5 5 5" }],
+  ["path", { d: "M4 15v5h16v-5" }],
+];
 
 const icons = {
   add: Plus,
@@ -47,7 +52,7 @@ const icons = {
   source: MapPin,
   tag: Tag,
   trash: Trash2,
-  upload: Upload,
+  upload: uploadIcon,
   weather: Sun,
 } satisfies Record<string, IconDefinition>;
 

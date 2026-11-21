@@ -247,7 +247,13 @@
   border-radius: 0;
 }
 .library-view .image-import-dialog-actions > button.image-import-submit { border-color: #343c45; }
-.image-import-dialog-actions > .image-import-submit svg { width: 24px; height: 24px; }
+.image-import-dialog-actions > .image-import-submit svg {
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.5;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
+}
 .image-import-count {
   color: #c8ebdd;
   font-size: 12px;
