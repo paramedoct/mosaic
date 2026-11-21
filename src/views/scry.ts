@@ -9,6 +9,7 @@ import { button, downloadHtml, element, errorMessage, input } from "./scry/ui";
 import "./scry/style.css";
 
 const files = new FileTransport();
+const cardImageCacheLimit = 32;
 type FileConnection = { name: string; root: FileRoot };
 
 function bytes(size: number): string {
@@ -281,7 +282,9 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   let wheelDistance = 0;
   let wheelLocked = false;
   let wheelReset: ReturnType<typeof setTimeout> | undefined;
-  const thumbnailUrls = new Set<string>();
+  const cardImageUrls = new Map<string, string>();
+  const activeCardImages = new Map<string, Set<HTMLImageElement>>();
+  let loadingCardImages = new Set<string>();
   const page = element("section", "library-view local-images-view");
   const toolbar = element("div", "scry-toolbar");
   const connectionToggle = button("", () => setConnectionOpen(!connectionDialog.open), "scry-tool-button");
@@ -806,16 +809,56 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   page.append(libraryControls, grid, status, connectionDialog, importDialog, dialog);
   container.replaceChildren(page);
   const observer = new IntersectionObserver(entries => {
-    for (const entry of entries) if (entry.isIntersecting) {
-      observer.unobserve(entry.target);
-      void loadThumbnail(entry.target as HTMLImageElement, request);
+    for (const entry of entries) {
+      const image = entry.target as HTMLImageElement;
+      if (entry.isIntersecting) activateCardImage(image, request);
+      else deactivateCardImage(image);
     }
   }, { rootMargin: "150px" });
 
-  function releaseThumbnails(): void {
+  function trimCardImageCache(): void {
+    let inactive = [...cardImageUrls.keys()].filter(id => !activeCardImages.has(id)).length;
+    for (const [id, url] of cardImageUrls) {
+      if (inactive <= cardImageCacheLimit) break;
+      if (activeCardImages.has(id)) continue;
+      cardImageUrls.delete(id);
+      URL.revokeObjectURL(url);
+      inactive -= 1;
+    }
+  }
+
+  function activateCardImage(image: HTMLImageElement, token: number): void {
+    const id = image.dataset.id;
+    if (!id) return;
+    const active = activeCardImages.get(id) ?? new Set<HTMLImageElement>();
+    active.add(image);
+    activeCardImages.set(id, active);
+    const cached = cardImageUrls.get(id);
+    if (cached) {
+      cardImageUrls.delete(id);
+      cardImageUrls.set(id, cached);
+      image.src = cached;
+      return;
+    }
+    void loadCardImage(id, token);
+  }
+
+  function deactivateCardImage(image: HTMLImageElement): void {
+    const id = image.dataset.id;
+    if (!id) return;
+    const active = activeCardImages.get(id);
+    active?.delete(image);
+    if (active && !active.size) activeCardImages.delete(id);
+    if (image.hasAttribute("src")) image.removeAttribute("src");
+    trimCardImageCache();
+  }
+
+  function releaseCardImages(): void {
     observer.disconnect();
-    for (const url of thumbnailUrls) URL.revokeObjectURL(url);
-    thumbnailUrls.clear();
+    for (const url of cardImageUrls.values()) URL.revokeObjectURL(url);
+    cardImageUrls.clear();
+    activeCardImages.clear();
+    loadingCardImages = new Set<string>();
   }
 
   function setConnectionOpen(open: boolean): void {
@@ -834,7 +877,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     request += 1;
     dialog.close();
     setImportOpen(false);
-    releaseThumbnails();
+    releaseCardImages();
     provider?.close();
     provider = undefined;
     source = undefined;
@@ -921,21 +964,32 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     }
   }
 
-  async function loadThumbnail(image: HTMLImageElement, token: number): Promise<void> {
+  async function loadCardImage(id: string, token: number): Promise<void> {
     const current = provider;
-    if (!current) return;
+    const loading = loadingCardImages;
+    if (!current || loading.has(id)) return;
+    loading.add(id);
     try {
-      const blob = await current.readImage(image.dataset.id!);
-      if (disposed || request !== token || !image.isConnected) return;
+      const blob = await current.readImage(id);
+      if (disposed || request !== token) return;
       const url = URL.createObjectURL(blob);
-      thumbnailUrls.add(url);
-      image.src = url;
+      const previous = cardImageUrls.get(id);
+      if (previous) URL.revokeObjectURL(previous);
+      cardImageUrls.delete(id);
+      cardImageUrls.set(id, url);
+      for (const image of activeCardImages.get(id) ?? []) if (image.isConnected) image.src = url;
+      trimCardImageCache();
     } catch {
       if (!disposed && request === token) {
-        image.alt = "Original image unavailable";
-        image.closest("button")?.append(element("span", "library-hint image-unavailable", "Original unavailable"));
+        for (const image of activeCardImages.get(id) ?? []) {
+          image.alt = "Original image unavailable";
+          const card = image.closest("button");
+          if (!card?.querySelector(".image-unavailable")) {
+            card?.append(element("span", "library-hint image-unavailable", "Original unavailable"));
+          }
+        }
       }
-    }
+    } finally { loading.delete(id); }
   }
 
   async function showImage(index: number): Promise<void> {
@@ -993,7 +1047,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       tagInput.update(result.tags);
       sourceInput.update(result.sources);
       count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
-      releaseThumbnails();
+      releaseCardImages();
       grid.replaceChildren(...entries.map(({ image, group }) => {
         const card = button("", () => {
           viewerGroup = group;
@@ -1096,7 +1150,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     dialog.close();
     setConnectionOpen(false);
     setImportOpen(false);
-    releaseThumbnails();
+    releaseCardImages();
     provider?.close();
     queuedItems.forEach(item => { if (item.kind === "file" && item.preview) URL.revokeObjectURL(item.preview); });
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
