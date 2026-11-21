@@ -19,6 +19,7 @@ function bytes(size: number): string {
 
 function suggestedInput(
   field: HTMLInputElement, choices: (value: string) => readonly { label: string; value: string }[], edited?: () => void,
+  selected?: (value: string) => void,
 ) {
   const wrapper = element("div", "scry-suggested-input");
   const suggestions = element("div", "scry-suggestions");
@@ -32,6 +33,7 @@ function suggestedInput(
       if (label.endsWith(":") && edited && value.endsWith(":")) render();
       else suggestions.replaceChildren();
       edited?.();
+      selected?.(value);
     })));
   }
   field.onclick = render;
@@ -61,14 +63,62 @@ function suggestedInput(
   return wrapper;
 }
 
-function importChoices(field: HTMLInputElement, edited?: () => void) {
+function importSourceInput() {
   let values: readonly string[] = [];
+  let source = "";
+  const field = input("source");
+  field.setAttribute("aria-label", "Source");
+  field.autocomplete = "off";
+  field.spellcheck = false;
+  const summary = button("", () => {
+    source = "";
+    renderSummary();
+    field.focus();
+  }, "image-import-source-summary");
+  summary.setAttribute("aria-live", "polite");
+  function renderSummary(): void {
+    summary.hidden = !source;
+    summary.setAttribute("aria-label", source ? `Remove source ${source}` : "No source selected");
+    summary.replaceChildren(element("span", "", "Source"), element("strong", "", source), icon("close"));
+  }
+  function commit(value = field.value): boolean {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    source = values.find(candidate => candidate.toLowerCase() === trimmed.toLowerCase()) ?? trimmed;
+    field.value = "";
+    field.setCustomValidity("");
+    renderSummary();
+    return true;
+  }
   const wrapper = suggestedInput(field, value => {
     const query = value.trim().toLowerCase();
     return values.filter(choice => choice !== value && choice.toLowerCase().includes(query)).slice(0, 5)
       .map(choice => ({ label: choice, value: choice }));
-  }, edited);
-  return { wrapper, update(next: readonly string[]) { values = next; } };
+  }, () => field.setCustomValidity(""), commit);
+  wrapper.classList.add("image-import-source-field");
+  wrapper.prepend(icon("source"));
+  field.addEventListener("keydown", event => {
+    if (event.isComposing || !field.value.trim() || event.key !== "Enter" && event.key !== "Tab") return;
+    if (event.key === "Enter") event.preventDefault();
+    commit();
+    wrapper.querySelector(".scry-suggestions")?.replaceChildren();
+  });
+  wrapper.addEventListener("focusout", () => queueMicrotask(() => {
+    if (wrapper.contains(document.activeElement)) return;
+    commit();
+  }));
+  renderSummary();
+  return {
+    wrapper,
+    summary,
+    value: () => source,
+    reportValidity(): boolean {
+      commit();
+      field.setCustomValidity(source ? "" : "Enter a source.");
+      return field.reportValidity();
+    },
+    update(next: readonly string[]) { values = next; },
+  };
 }
 
 function parseTags(value: string): string[] {
@@ -352,20 +402,8 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const importFields = element("fieldset", "image-import-fields");
   importFields.disabled = true;
   importPanel.append(importFields);
-  const importSource = input("source");
-  importSource.setAttribute("aria-label", "Source");
-  const sourceSummary = element("span", "image-import-source-summary");
-  function renderSourceSummary(): void {
-    const value = importSource.value.trim();
-    sourceSummary.hidden = !value;
-    sourceSummary.replaceChildren(element("span", "", "Source"), element("strong", "", value));
-  }
+  const sourceInput = importSourceInput();
   const tagInput = importTagInput();
-  const sourceChoices = importChoices(importSource, renderSourceSummary);
-  sourceChoices.wrapper.classList.add("image-import-source-field");
-  sourceChoices.wrapper.prepend(icon("source"));
-  importSource.required = true;
-  renderSourceSummary();
   const importFiles = input("Images or ZIP files to add", "file");
   importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
   importFiles.multiple = true;
@@ -533,11 +571,11 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     importMessage.textContent = "";
   };
   const metadataFields = element("div", "image-import-metadata");
-  metadataFields.append(sourceChoices.wrapper, tagInput.wrapper);
+  metadataFields.append(sourceInput.wrapper, tagInput.wrapper);
   const importPicker = element("div", "image-import-picker");
   const importSummary = element("div", "image-import-summary");
   const metadataSummary = element("div", "image-import-metadata-summary");
-  metadataSummary.append(sourceSummary, tagInput.summary);
+  metadataSummary.append(sourceInput.summary, tagInput.summary);
   importSummary.append(importQueue, metadataSummary);
   importPicker.append(importSummary, inputs, metadataFields);
   const closeImport = button("", () => setImportOpen(false), "image-import-close");
@@ -584,7 +622,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       return;
     }
     importMessage.textContent = "";
-    if (!tagInput.reportValidity() || !importSource.reportValidity()) return;
+    if (!tagInput.reportValidity() || !sourceInput.reportValidity()) return;
     const tags = tagInput.tags();
     const permission = root.handle.requestPermission({ mode: "readwrite" });
     void run(async () => {
@@ -627,7 +665,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       renderQueue();
       let result;
       try {
-        result = await current.addImages([...selected, ...downloaded], tags, importSource.value);
+        result = await current.addImages([...selected, ...downloaded], tags, sourceInput.value());
       } catch (error) {
         importMessage.textContent = errorMessage(error);
         queuedItems.forEach(item => { item.state = "error"; item.error = "Could not add"; });
@@ -953,7 +991,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       });
       searchFacets = { source: result.sources, tag: result.tags };
       tagInput.update(result.tags);
-      sourceChoices.update(result.sources);
+      sourceInput.update(result.sources);
       count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
       releaseThumbnails();
       grid.replaceChildren(...entries.map(({ image, group }) => {

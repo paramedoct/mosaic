@@ -91,14 +91,18 @@
 .image-import-dialog {
   width: min(560px, calc(100% - 24px));
   max-height: calc(100dvh - 32px);
+  overflow: visible;
   padding: 14px;
   color: inherit;
   background: #171b20;
   border: 1px solid #343b44;
-  border-radius: 10px;
+  border-radius: 0;
   box-shadow: 0 24px 80px #0008;
 }
 .image-import-dialog::backdrop { background: #0008; }
+.image-import-dialog,
+.image-import-dialog * { border-radius: 0 !important; }
+.image-import-dialog { border-radius: 4px !important; }
 .image-import-close {
   display: grid;
   place-items: center;
@@ -106,7 +110,7 @@
   height: 46px;
   padding: 0;
   border-color: #343c45;
-  border-radius: 6px;
+  border-radius: 0;
   background: #12171b;
   color: #839089;
 }
@@ -115,9 +119,9 @@
   align-self: stretch;
   flex-direction: column;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
 }
-.image-import-form { margin: 0; padding: 0; border-radius: 6px; }
+.image-import-form { margin: 0; padding: 0; border-radius: 0; }
 .image-import-form.is-dragging { outline: 1px solid #80cdb2; outline-offset: 7px; }
 .image-import-fields {
   display: grid;
@@ -136,34 +140,34 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 46px;
   align-items: start;
-  gap: 8px;
+  gap: 6px;
 }
 .image-import-picker {
   overflow: visible;
   background: transparent;
 }
 .image-import-summary {
+  min-height: 38px;
   border: 1px solid #343c45;
-  border-radius: 6px 6px 0 0;
+  border-radius: 0;
   background: #12171b;
 }
 .image-import-inputs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 48px;
   align-items: center;
+  height: 46px;
   border: 1px solid #343c45;
-  border-radius: 6px 6px 6px 0;
+  border-radius: 0;
   background: #12171b;
   transition: border-color 120ms ease;
 }
 .image-import-picker:has(.image-import-queue:not([hidden]), .image-import-source-summary:not([hidden]),
   .image-import-tag-summary:not([hidden])) .image-import-inputs {
   margin-top: -1px;
-  border-radius: 0 0 6px 0;
+  border-radius: 0;
 }
 .image-import-inputs:focus-within { position: relative; z-index: 1; border-color: #77bda5; }
-.image-import-summary:not(:has(.image-import-queue:not([hidden]), .image-import-source-summary:not([hidden]),
-  .image-import-tag-summary:not([hidden]))) { display: none; }
 .image-import-inputs > button {
   display: grid;
   place-items: center;
@@ -204,7 +208,13 @@
   border-color: #77bda5;
 }
 .image-import-metadata > .image-import-source-field { grid-column: 1; grid-row: 1; }
-.image-import-metadata > .image-import-tag-field { grid-column: 1; grid-row: 2; border-radius: 0 0 6px 6px; }
+.image-import-metadata > .image-import-tag-field { grid-column: 1; grid-row: 2; border-radius: 0; }
+.image-import-metadata > .image-import-tag-field:focus-within {
+  height: 47px;
+  margin-top: -1px;
+  border-top: 1px solid #77bda5;
+}
+.image-import-metadata > .scry-suggested-input:focus-within:has(.scry-suggestions:not(:empty)) { border-radius: 0; }
 .library-view .image-import-form .image-import-metadata input:not([type="file"]) {
   min-height: 44px;
   padding-block: 11px;
@@ -227,10 +237,10 @@
   position: relative;
   z-index: 2;
   align-self: flex-end;
-  width: 92px;
+  width: 94px;
   height: 85px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 0;
 }
 .image-import-dialog-actions > .image-import-submit svg { width: 24px; height: 24px; }
 .image-import-count {
@@ -243,7 +253,7 @@
 .library-view .image-import-form input:focus-visible { border-color: #8bd0b8; outline: 1px solid #8bd0b8; outline-offset: -1px; }
 .image-import-tag-field {
   border: 1px solid #303742;
-  border-radius: 6px;
+  border-radius: 0;
   background: #181c22;
 }
 .image-import-metadata .image-import-tag-field:focus-within { outline: 0; }
@@ -261,23 +271,43 @@
 .image-import-queue[hidden] + .image-import-metadata-summary { padding-top: 8px; }
 .image-import-tag-summary { display: contents; }
 .image-import-tag-summary[hidden] { display: none; }
-.image-import-source-summary {
+.library-view button.image-import-source-summary {
   display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   max-width: 100%;
-  padding: 5px 10px;
+  padding: 4px 6px 4px 10px;
   overflow: hidden;
   border: 1px solid #3a4650;
-  border-radius: 20px;
+  border-radius: 0;
   background: #1a2228;
   color: #aebcc6;
-  font-size: 11px;
+  font-size: 11px !important;
+  line-height: 18px;
   white-space: nowrap;
 }
 .image-import-source-summary[hidden] { display: none; }
-.image-import-source-summary span { color: #71818d; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
-.image-import-source-summary strong { overflow: hidden; font: inherit; font-weight: 550; text-overflow: ellipsis; }
+.library-view button.image-import-source-summary span {
+  color: #71818d;
+  font: inherit;
+  font-size: 9px !important;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.library-view button.image-import-source-summary strong {
+  overflow: hidden;
+  font: inherit;
+  font-size: 11px !important;
+  font-weight: 400;
+  text-transform: none;
+  text-overflow: ellipsis;
+}
+.library-view button.image-import-source-summary > svg {
+  width: 14px;
+  height: 14px;
+  color: #a9c4b8;
+  opacity: .72;
+}
 .image-import-tag-entry {
   position: relative;
   min-height: 44px;
@@ -309,7 +339,7 @@
   min-height: 44px;
   padding: 11px 12px 11px 36px;
   border: 0;
-  border-radius: 8px;
+  border-radius: 0;
   background: transparent;
   outline: 0;
 }
@@ -321,17 +351,17 @@
   padding: 4px 6px 4px 10px;
 }
 .image-import-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.image-import-tag svg { flex: 0 0 auto; width: 14px; height: 14px; opacity: .72; }
+.image-import-form .image-import-tag svg { flex: 0 0 auto; width: 14px; height: 14px; opacity: .72; }
 .image-import-tag:hover, .image-import-tag:focus-visible { border-color: #8ed4b5; background: #244536; color: #d1f7e4; }
 .scry-suggestions {
   position: absolute;
-  z-index: 1;
+  z-index: 10;
   inset: calc(100% + 4px) 0 auto;
   padding: 4px;
   max-height: min(184px, 32dvh);
   overflow: auto;
   border: 1px solid #303742;
-  border-radius: 6px;
+  border-radius: 0;
   background: #20262c;
   box-shadow: 0 6px 16px #0006;
 }
@@ -348,7 +378,26 @@
   overflow-wrap: anywhere;
 }
 .scry-suggestions button:hover, .scry-suggestions button:focus-visible { background: #303943; }
-.image-import-metadata .scry-suggestions { inset: auto 0 calc(100% + 4px); }
+.image-import-metadata .scry-suggestions {
+  inset: 100% -1px auto;
+  width: auto;
+  padding: 4px;
+  border-top: 0;
+  border-radius: 0;
+  border-color: #3b4650;
+  background: #171d22;
+  box-shadow: 0 10px 24px #0008;
+}
+.image-import-metadata .scry-suggestions button {
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #c1ccc7;
+}
+.image-import-metadata .scry-suggestions button:hover,
+.image-import-metadata .scry-suggestions button:focus-visible { background: #263039; color: #eef5f1; }
 .image-import-links { position: relative; display: block; min-width: 0; }
 .image-import-links > svg {
   position: absolute;
@@ -361,6 +410,7 @@
   pointer-events: none;
 }
 .library-view .image-import-form .image-import-links input:not([type="file"]) {
+  min-height: 44px;
   padding-inline-start: 36px;
   border: 0;
   border-radius: 0;
@@ -368,6 +418,7 @@
   outline: 0;
 }
 .image-import-form button svg { width: 18px; height: 18px; }
+.image-import-form .image-import-inputs > button svg { width: 16px; height: 16px; }
 .image-import-queue {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -400,7 +451,7 @@
   width: 36px;
   height: 36px;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: 0;
   background: #11161a;
   color: #7f9188;
 }
