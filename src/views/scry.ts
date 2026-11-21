@@ -11,6 +11,7 @@ import "./scry/style.css";
 const files = new FileTransport();
 const cardImageCacheLimit = 32;
 type FileConnection = { name: string; root: FileRoot };
+type GridEntry = { image: ImageSummary; group?: ImageGroup; createdAt: string; id: number };
 
 function bytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -708,6 +709,11 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   libraryControls.append(filters);
   const grid = element("div", "image-grid");
   grid.setAttribute("aria-label", "Image collection");
+  let gridEntries: GridEntry[] = [];
+  let gridImages: readonly ImageSummary[] = [];
+  let gridRenderFrame: number | undefined;
+  let gridRenderKey = "";
+  let gridVersion = 0;
 
   const dialog = element("dialog", "image-dialog");
   dialog.setAttribute("aria-label", "Image viewer");
@@ -861,6 +867,82 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     loadingCardImages = new Set<string>();
   }
 
+  function detachGridImages(): void {
+    for (const image of grid.querySelectorAll<HTMLImageElement>(".image-card img")) {
+      observer.unobserve(image);
+      deactivateCardImage(image);
+    }
+  }
+
+  function createGridCard(entry: GridEntry, index: number, size: number, gap: number, columns: number): HTMLButtonElement {
+    const { image, group } = entry;
+    const card = button("", () => {
+      viewerGroup = group;
+      viewerImages = group?.images ?? gridImages;
+      void showImage(group ? 0 : gridImages.findIndex(candidate => candidate.id === image.id));
+    }, group ? "image-card image-group-card" : "image-card");
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    card.style.position = "absolute";
+    card.style.insetInlineStart = `${column * (size + gap)}px`;
+    card.style.top = `${row * (size + gap)}px`;
+    card.style.width = `${size}px`;
+    card.style.height = `${size}px`;
+    const label = image.tags.join(", ") || image.source;
+    card.setAttribute("aria-label", group ? `View ${label}, ${group.images.length} images` : `View ${label}`);
+    const preview = element("img");
+    preview.alt = label;
+    preview.loading = "lazy";
+    preview.dataset.id = image.id;
+    preview.onerror = () => { preview.alt = "Image format could not be displayed"; };
+    card.append(preview);
+    if (group) {
+      const badge = element("span", "image-group-count", String(group.images.length));
+      badge.setAttribute("aria-hidden", "true");
+      card.append(badge);
+    }
+    observer.observe(preview);
+    return card;
+  }
+
+  function renderGridWindow(): void {
+    gridRenderFrame = undefined;
+    if (!gridEntries.length || !grid.isConnected) return;
+    const style = getComputedStyle(grid);
+    const minimum = Number.parseFloat(style.getPropertyValue("--image-card-min")) || 170;
+    const gap = Number.parseFloat(style.getPropertyValue("--image-grid-gap")) || 8;
+    const width = grid.clientWidth;
+    if (!width) return;
+    const columns = Math.max(1, Math.floor((width + gap) / (minimum + gap)));
+    const size = (width - gap * (columns - 1)) / columns;
+    const stride = size + gap;
+    const rows = Math.ceil(gridEntries.length / columns);
+    const height = rows * size + Math.max(0, rows - 1) * gap;
+    grid.style.height = `${height}px`;
+    const bounds = grid.getBoundingClientRect();
+    const visibleStart = Math.max(0, Math.min(height, -bounds.top));
+    const visibleEnd = Math.max(visibleStart, Math.min(height, window.innerHeight - bounds.top));
+    const startRow = Math.max(0, Math.floor(visibleStart / stride) - 2);
+    const endRow = Math.min(rows, Math.max(startRow + 1, Math.ceil(visibleEnd / stride) + 2));
+    const start = startRow * columns;
+    const end = Math.min(gridEntries.length, endRow * columns);
+    const key = `${gridVersion}:${width}:${columns}:${start}:${end}`;
+    if (key === gridRenderKey) return;
+    gridRenderKey = key;
+    detachGridImages();
+    grid.replaceChildren(...gridEntries.slice(start, end)
+      .map((entry, offset) => createGridCard(entry, start + offset, size, gap, columns)));
+  }
+
+  function scheduleGridRender(): void {
+    if (gridRenderFrame !== undefined) return;
+    gridRenderFrame = requestAnimationFrame(renderGridWindow);
+  }
+
+  const gridResizeObserver = new ResizeObserver(scheduleGridRender);
+  gridResizeObserver.observe(grid);
+  window.addEventListener("scroll", scheduleGridRender, { passive: true });
+
   function setConnectionOpen(open: boolean): void {
     if (open && !connectionDialog.open) connectionDialog.showModal();
     else if (!open && connectionDialog.open) connectionDialog.close();
@@ -882,6 +964,12 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     provider = undefined;
     source = undefined;
     searchFacets = { source: [], tag: [] };
+    gridEntries = [];
+    gridImages = [];
+    gridVersion += 1;
+    gridRenderKey = "";
+    grid.classList.remove("is-virtualized");
+    grid.style.height = "";
     grid.replaceChildren();
     connectionName.textContent = "No library connected";
     count.textContent = "";
@@ -1036,7 +1124,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       const result = await current.fetch({ terms: parseImageSearch(search.value), order: oldestFirst ? "oldest" : "newest" });
       if (disposed || token !== request) return;
       const images = result.standaloneImages;
-      const entries = [
+      const entries: GridEntry[] = [
         ...images.map(image => ({ image, group: undefined as ImageGroup | undefined, createdAt: image.createdAt, id: Number(image.id) })),
         ...result.groups.map(group => ({ image: group.images[0], group, createdAt: group.createdAt, id: Number(group.id) })),
       ].sort((left, right) => {
@@ -1048,29 +1136,15 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       sourceInput.update(result.sources);
       count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
       releaseCardImages();
-      grid.replaceChildren(...entries.map(({ image, group }) => {
-        const card = button("", () => {
-          viewerGroup = group;
-          viewerImages = group?.images ?? images;
-          void showImage(group ? 0 : images.findIndex(candidate => candidate.id === image.id));
-        }, group ? "image-card image-group-card" : "image-card");
-        const label = image.tags.join(", ") || image.source;
-        card.setAttribute("aria-label", group ? `View ${label}, ${group.images.length} images` : `View ${label}`);
-        const thumbnail = element("img");
-        thumbnail.alt = label;
-        thumbnail.loading = "lazy";
-        thumbnail.dataset.id = image.id;
-        thumbnail.onerror = () => { thumbnail.alt = "Image format could not be displayed"; };
-        card.append(thumbnail);
-        if (group) {
-          const badge = element("span", "image-group-count", String(group.images.length));
-          badge.setAttribute("aria-hidden", "true");
-          card.append(badge);
-        }
-        observer.observe(thumbnail);
-        return card;
-      }));
-      if (!entries.length) grid.append(element("p", "library-empty", result.total ? "No images match these filters." : "No images are registered in this library."));
+      gridEntries = entries;
+      gridImages = images;
+      gridVersion += 1;
+      gridRenderKey = "";
+      grid.replaceChildren();
+      grid.classList.toggle("is-virtualized", Boolean(entries.length));
+      grid.style.height = "";
+      if (entries.length) renderGridWindow();
+      else grid.append(element("p", "library-empty", result.total ? "No images match these filters." : "No images are registered in this library."));
     } catch (error) { if (!disposed && token === request) status.textContent = errorMessage(error); }
   }
 
@@ -1144,6 +1218,9 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     pendingConnection?.abort();
     clearTimeout(restoreTimer);
     clearTimeout(wheelReset);
+    gridResizeObserver.disconnect();
+    window.removeEventListener("scroll", scheduleGridRender);
+    if (gridRenderFrame !== undefined) cancelAnimationFrame(gridRenderFrame);
     if (queueFrame !== undefined) cancelAnimationFrame(queueFrame);
     request += 1;
     viewerRequest += 1;
