@@ -204,76 +204,285 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       if (!disposed) await connectDirectory(root);
     });
   };
-  const importDialog = element("dialog", "library-dialog");
-  importDialog.setAttribute("aria-labelledby", "scry-import-title");
-  const importHeader = element("header", "library-dialog-header");
-  const importTitle = element("h2", "", "Add images");
-  importTitle.id = "scry-import-title";
-  const closeImport = button("", () => setImportOpen(false));
-  setAction(closeImport, "close", "Close");
-  importHeader.append(importTitle, closeImport);
-  const importPanel = element("form", "library-import");
+  const importPanel = element("form", "image-import-form");
+  importPanel.noValidate = true;
+  importPanel.setAttribute("aria-label", "Add images");
+  const importFields = element("fieldset", "image-import-fields");
+  importFields.disabled = true;
+  importPanel.append(importFields);
   const importSubject = input("Subject");
   const importSource = input("Source");
   const subjectChoices = importChoices(importSubject);
   const sourceChoices = importChoices(importSource);
-  const importSubjects = element("datalist");
-  const importSources = element("datalist");
-  importSubjects.id = "local-image-subjects";
-  importSources.id = "local-image-sources";
-  importSubject.setAttribute("list", importSubjects.id);
-  importSource.setAttribute("list", importSources.id);
   importSubject.required = importSource.required = true;
   const importFiles = input("Images or ZIP files to add", "file");
   importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
   importFiles.multiple = true;
-  const importUrls = element("textarea");
-  importUrls.placeholder = "One HTTPS download URL per line";
-  importUrls.setAttribute("aria-label", "Image or ZIP download URLs");
-  importUrls.rows = 4;
-  importFiles.onchange = importUrls.oninput = () => importUrls.setCustomValidity("");
-  const addImages = element("button", "primary-button", "Add images");
+  importFiles.hidden = true;
+  const importUrls = input("https://");
+  importUrls.setAttribute("aria-label", "Image or ZIP links");
+  importUrls.spellcheck = false;
+  importUrls.autocomplete = "off";
+  type ImportItem = {
+    kind: "file";
+    file: File;
+    preview?: string;
+    state: "queued" | "saving" | "error";
+    error?: string;
+  } | {
+    kind: "url";
+    url: string;
+    state: "queued" | "downloading" | "ready" | "saving" | "error";
+    received?: number;
+    size?: number;
+    error?: string;
+  };
+  const queuedItems: ImportItem[] = [];
+  let queueFrame: number | undefined;
+  const importQueue = element("ul", "image-import-queue");
+  importQueue.hidden = true;
+  const importMessage = element("p", "image-import-message");
+  importMessage.setAttribute("role", "status");
+  const addImages = element("button", "primary-button image-import-submit");
+  setAction(addImages, "upload", "Add to library");
   addImages.type = "submit";
-  const importControls = element("div", "library-actions");
-  for (const [label, control] of [["Subject", importSubject], ["Source", importSource],
-    ["Images", importFiles], ["Download URLs", importUrls]] as const) {
-    const field = element("label", "image-import-field", label);
-    field.append(control);
-    importControls.append(field);
+  const addCount = element("span", "image-import-count");
+  addImages.append(addCount);
+  function itemLabel(item: ImportItem): { name: string; detail: string } {
+    if (item.kind === "file") return { name: item.file.name, detail: bytes(item.file.size) };
+    const url = new URL(item.url);
+    const segment = url.pathname.split("/").filter(Boolean).pop() ?? url.hostname;
+    let name = segment;
+    try { name = decodeURIComponent(segment); } catch { /* Keep the encoded path segment. */ }
+    return { name, detail: url.hostname };
   }
-  importControls.append(addImages);
-  importPanel.append(importControls, importSubjects, importSources);
-  importDialog.append(importHeader, importPanel);
-  importDialog.onclick = event => {
-    if (event.target !== importDialog) return;
-    const bounds = importDialog.getBoundingClientRect();
-    if (event.clientX < bounds.left || event.clientX > bounds.right ||
-      event.clientY < bounds.top || event.clientY > bounds.bottom) setImportOpen(false);
+  function itemStatus(item: ImportItem): string {
+    if (item.state === "downloading") {
+      return item.size ? `${bytes(item.received ?? 0)} / ${bytes(item.size)}` : `${bytes(item.received ?? 0)}`;
+    }
+    if (item.state === "ready") return "Downloaded";
+    if (item.state === "saving") return "Adding…";
+    if (item.state === "error") return item.error ?? "Failed";
+    return "";
+  }
+  function renderQueue(): void {
+    importQueue.hidden = queuedItems.length === 0;
+    addImages.disabled = queuedItems.length === 0;
+    addCount.textContent = queuedItems.length ? String(queuedItems.length) : "";
+    addCount.hidden = queuedItems.length === 0;
+    importQueue.replaceChildren(...queuedItems.map((queued, index) => {
+      const row = element("li", `image-import-item is-${queued.state}`);
+      const visual = element("span", "image-import-preview");
+      if (queued.kind === "file" && queued.preview) {
+        const preview = element("img");
+        preview.src = queued.preview;
+        preview.alt = "";
+        visual.append(preview);
+      } else {
+        visual.append(icon(queued.kind === "url" ? "link" : "archive"));
+      }
+      const { name, detail } = itemLabel(queued);
+      const copy = element("span", "image-import-item-copy");
+      const title = element("strong", "", name);
+      title.title = queued.kind === "url" ? queued.url : queued.file.name;
+      const meta = element("span", "", detail);
+      copy.append(title, meta);
+      const state = element("span", "image-import-item-state", itemStatus(queued));
+      state.title = state.textContent;
+      if (queued.state === "downloading") {
+        const progress = element("progress");
+        progress.setAttribute("aria-label", `Downloading ${name}`);
+        if (queued.size) {
+          progress.max = queued.size;
+          progress.value = Math.min(queued.received ?? 0, queued.size);
+        }
+        state.prepend(progress);
+      }
+      const action = button("", () => {
+        if (busy) return;
+        if (queued.state === "error" && queued.kind === "url") {
+          queued.state = "queued";
+          queued.error = undefined;
+          renderQueue();
+          importPanel.requestSubmit();
+          return;
+        }
+        const [removed] = queuedItems.splice(index, 1);
+        if (removed?.kind === "file" && removed.preview) URL.revokeObjectURL(removed.preview);
+        renderQueue();
+        (importQueue.querySelectorAll("button")[index] ??
+          importQueue.querySelector("li:last-child button") ?? importUrls).focus();
+      });
+      setAction(action, queued.state === "error" && queued.kind === "url" ? "refresh" : "close",
+        queued.state === "error" && queued.kind === "url" ? `Retry ${name}` : `Remove ${name}`);
+      row.append(visual, copy, state, action);
+      return row;
+    }));
+  }
+  function scheduleQueueRender(): void {
+    if (queueFrame !== undefined) return;
+    queueFrame = requestAnimationFrame(() => {
+      queueFrame = undefined;
+      renderQueue();
+    });
+  }
+  function queueFiles(filesToAdd: readonly File[]): boolean {
+    let rejected = 0;
+    for (const file of filesToAdd) {
+      const archive = /\.zip$/i.test(file.name) || ["application/zip", "application/x-zip-compressed"].includes(file.type);
+      if (!file.type.startsWith("image/") && !archive) { rejected++; continue; }
+      const duplicate = queuedItems.some(item => item.kind === "file" && item.file.name === file.name &&
+        item.file.size === file.size && item.file.lastModified === file.lastModified);
+      if (duplicate) continue;
+      queuedItems.push({ kind: "file", file,
+        preview: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined, state: "queued" });
+    }
+    renderQueue();
+    importMessage.textContent = rejected ? `Skipped ${rejected} unsupported ${rejected === 1 ? "file" : "files"}.` : "";
+    return rejected === 0;
+  }
+  function queueLinks(value: string): boolean {
+    const entries = downloadUrls(value);
+    if (!entries.length) return true;
+    let rejected = 0;
+    for (const entry of entries) {
+      const url = URL.canParse(entry) ? new URL(entry) : undefined;
+      if (url?.protocol === "https:" && !url.username && !url.password) {
+        if (!queuedItems.some(item => item.kind === "url" && item.url === url.href)) {
+          queuedItems.push({ kind: "url", url: url.href, state: "queued" });
+        }
+      }
+      else rejected++;
+    }
+    renderQueue();
+    importMessage.textContent = rejected ? `Skipped ${rejected} invalid HTTPS ${rejected === 1 ? "link" : "links"}.` : "";
+    return rejected === 0;
+  }
+  importUrls.onpaste = event => {
+    event.preventDefault();
+    queueLinks(event.clipboardData?.getData("text/plain") ?? "");
+    importUrls.value = "";
+  };
+  importUrls.onkeydown = event => {
+    if (event.key !== "Enter" || event.isComposing || !importUrls.value.trim()) return;
+    event.preventDefault();
+    if (queueLinks(importUrls.value)) importUrls.value = "";
+  };
+  const chooseFiles = button("", () => importFiles.click());
+  setAction(chooseFiles, "addImages", "Choose files");
+  const linkRow = element("label", "image-import-links");
+  linkRow.append(icon("link"), importUrls);
+  const inputs = element("div", "image-import-inputs");
+  inputs.append(chooseFiles, importFiles, linkRow);
+  importFiles.onchange = () => {
+    queueFiles(Array.from(importFiles.files ?? []));
+    importFiles.value = "";
+  };
+  importUrls.oninput = () => {
+    importMessage.textContent = "";
+  };
+  const metadataFields = element("div", "image-import-metadata");
+  metadataFields.append(subjectChoices.wrapper, sourceChoices.wrapper);
+  const importPicker = element("div", "image-import-picker");
+  importPicker.append(importQueue, inputs);
+  const closeImport = button("", () => setImportOpen(false), "image-import-close");
+  setAction(closeImport, "close", "Close");
+  const importTop = element("div", "image-import-top");
+  importTop.append(importPicker, closeImport);
+  const importActions = element("div", "image-import-actions");
+  importActions.append(metadataFields, addImages);
+  importFields.append(importTop, importActions, importMessage);
+  const importDialog = element("dialog", "image-import-dialog");
+  importDialog.setAttribute("aria-label", "Add images");
+  importDialog.append(importPanel);
+  importDialog.addEventListener("cancel", event => { if (busy) event.preventDefault(); });
+  renderQueue();
+  importPanel.ondragover = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = busy ? "none" : "copy";
+    importPanel.classList.toggle("is-dragging", !busy);
+  };
+  importPanel.ondragleave = event => {
+    event.stopPropagation();
+    if (!importPanel.contains(event.relatedTarget as Node | null)) importPanel.classList.remove("is-dragging");
+  };
+  importPanel.ondrop = event => {
+    event.preventDefault();
+    event.stopPropagation();
+    importPanel.classList.remove("is-dragging");
+    if (!busy && event.dataTransfer) queueFiles([...event.dataTransfer.files]);
   };
   importPanel.onsubmit = event => {
     event.preventDefault();
     const current = provider;
     const root = source?.root;
-    const selected = importFiles.files ? [...importFiles.files] : [];
-    const urls = downloadUrls(importUrls.value);
+    const selected = queuedItems.filter((item): item is Extract<ImportItem, { kind: "file" }> => item.kind === "file")
+      .map(item => item.file);
     if (busy || !current || root?.kind !== "directory") return;
+    if (!queueLinks(importUrls.value)) return;
+    importUrls.value = "";
+    const linkItems = queuedItems.filter((item): item is Extract<ImportItem, { kind: "url" }> => item.kind === "url");
+    const urls = linkItems.map(item => item.url);
     if (!selected.length && !urls.length) {
-      importUrls.setCustomValidity("Choose local files or enter download URLs.");
-      importUrls.reportValidity();
+      importUrls.focus();
       return;
     }
-    importUrls.setCustomValidity("");
+    importMessage.textContent = "";
+    if (!importSubject.reportValidity() || !importSource.reportValidity()) return;
     const permission = root.handle.requestPermission({ mode: "readwrite" });
     void run(async () => {
-      if (await permission !== "granted") throw new Error("Write access was not granted. No images were added.");
-      const downloaded = await downloadImages(urls, completed => {
-        if (urls.length) status.textContent = `Downloading ${completed} / ${urls.length}…`;
+      status.textContent = "";
+      if (await permission.catch(() => "denied") !== "granted") {
+        importMessage.textContent = "Write access was not granted.";
+        return;
+      }
+      queuedItems.forEach(item => {
+        item.state = item.kind === "url" ? "queued" : "saving";
+        item.error = undefined;
       });
-      status.textContent = "Opening files, hashing and adding images…";
-      const result = await current.addImages([...selected, ...downloaded], importSubject.value, importSource.value);
+      renderQueue();
+      let downloaded: File[];
+      let activeUrl: string | undefined;
+      try {
+        downloaded = await downloadImages(urls, progress => {
+          activeUrl = progress.current;
+          linkItems.forEach((item, index) => {
+            if (index < progress.completed || !progress.current) item.state = "ready";
+            else if (item.url === progress.current) {
+              item.state = "downloading";
+              item.received = progress.received;
+              item.size = progress.size;
+            }
+          });
+          scheduleQueueRender();
+        });
+      } catch (error) {
+        const failed = linkItems.find(item => item.url === activeUrl) ?? linkItems.find(item => item.state !== "ready");
+        if (failed) {
+          failed.state = "error";
+          failed.error = errorMessage(error);
+        }
+        queuedItems.filter(item => item.kind === "file").forEach(item => { item.state = "queued"; });
+        renderQueue();
+        return;
+      }
+      queuedItems.forEach(item => { item.state = "saving"; });
+      renderQueue();
+      let result;
+      try {
+        result = await current.addImages([...selected, ...downloaded], importSubject.value, importSource.value);
+      } catch (error) {
+        importMessage.textContent = errorMessage(error);
+        queuedItems.forEach(item => { item.state = "error"; item.error = "Could not add"; });
+        renderQueue();
+        return;
+      }
       if (disposed) return;
-      importFiles.value = "";
       importUrls.value = "";
+      queuedItems.forEach(item => { if (item.kind === "file" && item.preview) URL.revokeObjectURL(item.preview); });
+      queuedItems.splice(0);
+      renderQueue();
       await refresh();
       setImportOpen(false);
       status.textContent = `${result.added} images added · ${result.skipped} duplicates reused or skipped.` +
@@ -423,7 +632,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   function setImportOpen(open: boolean): void {
     if (open && !importDialog.open && source?.root.kind === "directory") {
       importDialog.showModal();
-      importSubject.focus();
+      importUrls.focus();
     } else if (!open && importDialog.open) importDialog.close();
   }
 
@@ -441,6 +650,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     count.textContent = "";
     reload.disabled = true;
     importToggle.disabled = true;
+    importFields.disabled = true;
     connect.disabled = true;
     connect.hidden = true;
   }
@@ -468,6 +678,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     const isSession = next.root.kind === "selection";
     connectionName.textContent = next.name;
     importToggle.disabled = isSession;
+    importFields.disabled = isSession || busy;
     connect.hidden = isSession || next.root.kind === "directory" && next.root.handle === savedConnection;
     reconnect.hidden = true;
     search.value = "";
@@ -618,9 +829,10 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     if (busy || disposed) return;
     operation += 1;
     busy = true;
-    const controls = [connectionToggle, importToggle, connect, openSession, createLibrary, sessionFallback,
-      reload, reconnect, forget, addImages, importSubject, importSource, importFiles, importUrls, deleteImage, order];
+    const controls = [connectionToggle, importToggle, connect, openSession, createLibrary, sessionFallback, closeImport,
+      reload, reconnect, forget, deleteImage, order];
     controls.forEach(control => { control.disabled = true; });
+    importFields.disabled = true;
     status.textContent = "Reading library…";
     try { await action(); }
     catch (error) {
@@ -631,6 +843,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
         controls.forEach(control => { control.disabled = false; });
         reload.disabled = !provider;
         importToggle.disabled = source?.root.kind !== "directory";
+        importFields.disabled = source?.root.kind !== "directory";
         connect.disabled = source?.root.kind !== "directory";
       }
     }
@@ -682,6 +895,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     pendingConnection?.abort();
     clearTimeout(restoreTimer);
     clearTimeout(wheelReset);
+    if (queueFrame !== undefined) cancelAnimationFrame(queueFrame);
     request += 1;
     viewerRequest += 1;
     dialog.close();
@@ -689,6 +903,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     setImportOpen(false);
     releaseThumbnails();
     provider?.close();
+    queuedItems.forEach(item => { if (item.kind === "file" && item.preview) URL.revokeObjectURL(item.preview); });
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
     toolbar.remove();
   };

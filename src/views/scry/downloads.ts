@@ -9,7 +9,15 @@ const fileTypes: Record<string, string> = {
 };
 
 export function downloadUrls(value: string): string[] {
-  return [...new Set(value.split(/\r?\n/).map(line => line.trim()).filter(Boolean))];
+  return [...new Set(value.trim().split(/\s+/).filter(Boolean))];
+}
+
+export interface DownloadProgress {
+  completed: number;
+  total: number;
+  current?: string;
+  received: number;
+  size?: number;
 }
 
 function fileName(response: Response, url: URL, index: number): string {
@@ -24,7 +32,7 @@ function fileName(response: Response, url: URL, index: number): string {
   return name.replace(/[\\/\0]/g, "_").slice(0, 255) || `download-${index + 1}`;
 }
 
-async function download(rawUrl: string, index: number): Promise<File> {
+async function download(rawUrl: string, index: number, progress: (received: number, size?: number) => void): Promise<File> {
   let url: URL;
   try { url = new URL(rawUrl); }
   catch (error) { throw new Error(`Invalid download URL: ${rawUrl}`, { cause: error }); }
@@ -38,8 +46,9 @@ async function download(rawUrl: string, index: number): Promise<File> {
   }
   if (!response.ok) throw new Error(`Could not download ${rawUrl}: HTTP ${response.status}`);
 
-  const declaredSize = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredSize) && declaredSize > downloadLimit) {
+  const sizeHeader = response.headers.get("content-length");
+  const declaredSize = sizeHeader ? Number(sizeHeader) : undefined;
+  if (declaredSize !== undefined && Number.isFinite(declaredSize) && declaredSize > downloadLimit) {
     throw new Error(`Download exceeds the 256 MB limit: ${rawUrl}`);
   }
   const name = fileName(response, url, index);
@@ -50,21 +59,45 @@ async function download(rawUrl: string, index: number): Promise<File> {
   if (!type.startsWith("image/") && !archive) {
     throw new Error(`Download is not an image or ZIP file: ${rawUrl}`);
   }
-  const blob = await response.blob();
+  progress(0, declaredSize && Number.isFinite(declaredSize) ? declaredSize : undefined);
+  const chunks: BlobPart[] = [];
+  let received = 0;
+  if (response.body) {
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > downloadLimit) {
+        await reader.cancel();
+        throw new Error(`Download exceeds the 256 MB limit: ${rawUrl}`);
+      }
+      chunks.push(new Uint8Array(value));
+      progress(received, declaredSize && Number.isFinite(declaredSize) ? declaredSize : undefined);
+    }
+  } else {
+    const value = await response.blob();
+    received = value.size;
+    chunks.push(value);
+    progress(received, declaredSize && Number.isFinite(declaredSize) ? declaredSize : undefined);
+  }
+  const blob = new Blob(chunks, { type });
   if (blob.size > downloadLimit) throw new Error(`Download exceeds the 256 MB limit: ${rawUrl}`);
   return new File([blob], archive && !/\.zip$/i.test(name) ? `${name}.zip` : name, { type, lastModified: Date.now() });
 }
 
-export async function downloadImages(urls: readonly string[], progress: (completed: number) => void): Promise<File[]> {
+export async function downloadImages(urls: readonly string[], progress: (state: DownloadProgress) => void): Promise<File[]> {
   const files: File[] = [];
   let size = 0;
   for (const [index, url] of urls.entries()) {
-    progress(index);
-    const file = await download(url, index);
+    progress({ completed: index, total: urls.length, current: url, received: 0 });
+    const file = await download(url, index, (received, expected) => {
+      progress({ completed: index, total: urls.length, current: url, received, size: expected });
+    });
     size += file.size;
     if (!Number.isSafeInteger(size) || size > downloadLimit) throw new Error("Downloads exceed the 256 MB total limit.");
     files.push(file);
   }
-  progress(urls.length);
+  progress({ completed: urls.length, total: urls.length, received: size, size });
   return files;
 }

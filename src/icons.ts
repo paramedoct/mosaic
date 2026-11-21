@@ -3,9 +3,12 @@ import {
   ChevronLeft,
   ChevronRight,
   createElement,
+  FileArchive,
   Grid2X2,
   Image,
+  ImagePlus,
   KeyRound,
+  Link,
   Maximize2,
   RefreshCw,
   Save,
@@ -21,10 +24,12 @@ import {
 type IconDefinition = Parameters<typeof createElement>[0];
 
 const icons = {
-  addImages: Upload,
+  addImages: ImagePlus,
+  archive: FileArchive,
   close: X,
   images: Image,
   library: Settings,
+  link: Link,
   lock: KeyRound,
   maximize: Maximize2,
   mosaic: Grid2X2,
@@ -36,6 +41,7 @@ const icons = {
   search: Search,
   sort: ArrowDownWideNarrow,
   trash: Trash2,
+  upload: Upload,
   weather: Sun,
 } satisfies Record<string, IconDefinition>;
 
