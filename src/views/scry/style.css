@@ -95,7 +95,7 @@
   color: inherit;
   background: #171b20;
   border: 1px solid #343b44;
-  border-radius: 16px;
+  border-radius: 10px;
   box-shadow: 0 24px 80px #0008;
 }
 .image-import-dialog::backdrop { background: #0008; }
@@ -106,6 +106,7 @@
   height: 46px;
   padding: 0;
   border-color: #343c45;
+  border-radius: 6px;
   background: #12171b;
   color: #839089;
 }
@@ -116,7 +117,7 @@
   justify-content: space-between;
   gap: 8px;
 }
-.image-import-form { margin: 0; padding: 0; border-radius: 10px; }
+.image-import-form { margin: 0; padding: 0; border-radius: 6px; }
 .image-import-form.is-dragging { outline: 1px solid #80cdb2; outline-offset: 7px; }
 .image-import-fields {
   display: grid;
@@ -143,7 +144,7 @@
 }
 .image-import-summary {
   border: 1px solid #343c45;
-  border-radius: 10px 10px 0 0;
+  border-radius: 6px 6px 0 0;
   background: #12171b;
 }
 .image-import-inputs {
@@ -151,14 +152,14 @@
   grid-template-columns: minmax(0, 1fr) 48px;
   align-items: center;
   border: 1px solid #343c45;
-  border-radius: 10px 10px 10px 0;
+  border-radius: 6px 6px 6px 0;
   background: #12171b;
   transition: border-color 120ms ease;
 }
 .image-import-picker:has(.image-import-queue:not([hidden]), .image-import-source-summary:not([hidden]),
   .image-import-tag-summary:not([hidden])) .image-import-inputs {
   margin-top: -1px;
-  border-radius: 0 0 10px 0;
+  border-radius: 0 0 6px 0;
 }
 .image-import-inputs:focus-within { position: relative; z-index: 1; border-color: #77bda5; }
 .image-import-summary:not(:has(.image-import-queue:not([hidden]), .image-import-source-summary:not([hidden]),
@@ -203,7 +204,7 @@
   border-color: #77bda5;
 }
 .image-import-metadata > .image-import-source-field { grid-column: 1; grid-row: 1; }
-.image-import-metadata > .image-import-tag-field { grid-column: 1; grid-row: 2; border-radius: 0 0 10px 10px; }
+.image-import-metadata > .image-import-tag-field { grid-column: 1; grid-row: 2; border-radius: 0 0 6px 6px; }
 .library-view .image-import-form .image-import-metadata input:not([type="file"]) {
   min-height: 44px;
   padding-block: 11px;
@@ -229,7 +230,7 @@
   width: 92px;
   height: 85px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: 6px;
 }
 .image-import-dialog-actions > .image-import-submit svg { width: 24px; height: 24px; }
 .image-import-count {
@@ -242,7 +243,7 @@
 .library-view .image-import-form input:focus-visible { border-color: #8bd0b8; outline: 1px solid #8bd0b8; outline-offset: -1px; }
 .image-import-tag-field {
   border: 1px solid #303742;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #181c22;
 }
 .image-import-metadata .image-import-tag-field:focus-within { outline: 0; }
@@ -330,7 +331,7 @@
   max-height: min(184px, 32dvh);
   overflow: auto;
   border: 1px solid #303742;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #20262c;
   box-shadow: 0 6px 16px #0006;
 }
@@ -388,7 +389,7 @@
   min-height: 50px;
   padding: 6px;
   border: 1px solid #2b343c;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #1c2329;
 }
 .image-import-item.is-error { border-color: #684348; background: #271e20; }
@@ -399,7 +400,7 @@
   width: 36px;
   height: 36px;
   overflow: hidden;
-  border-radius: 5px;
+  border-radius: 4px;
   background: #11161a;
   color: #7f9188;
 }
