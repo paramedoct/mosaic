@@ -157,7 +157,6 @@
 }
 .image-import-summary {
   grid-area: summary;
-  min-height: var(--image-import-row-height);
   border: 1px solid #343c45;
   border-bottom: 0;
   border-radius: 0;
@@ -452,6 +451,7 @@
   margin: 0;
   padding: 6px;
 }
+.image-import-queue:not([hidden]) { padding-bottom: 4px; }
 .image-import-queue[hidden] { display: none; }
 .image-import-item {
   display: grid;
