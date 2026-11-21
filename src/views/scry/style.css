@@ -550,7 +550,7 @@
 
 html:has(.image-dialog[open]), html:has(.library-dialog[open]), html:has(.image-import-dialog[open]) {
   overflow: hidden;
-  scrollbar-gutter: auto;
+  scrollbar-gutter: stable;
 }
 .image-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-width: none; max-height: calc(100dvh - 16px); padding: 0; overflow: hidden; color: inherit; background: #151a1e; border: 1px solid #364139; border-radius: 12px; }
 .image-dialog[open] { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
