@@ -76,16 +76,141 @@ function parseTags(value: string): string[] {
     .map(tag => [tag.toLowerCase(), tag] as const)).values()];
 }
 
-function importTagChoices(field: HTMLInputElement) {
+function importTagInput() {
   let values: readonly string[] = [];
-  const wrapper = suggestedInput(field, value => {
-    const parts = value.split(",");
-    const query = parts.at(-1)?.trim().toLowerCase() ?? "";
-    const selected = new Set(parseTags(parts.slice(0, -1).join(",")).map(tag => tag.toLowerCase()));
-    return values.filter(choice => !selected.has(choice.toLowerCase()) && choice.toLowerCase().includes(query)).slice(0, 5)
-      .map(choice => ({ label: choice, value: [...parts.slice(0, -1).map(part => part.trim()).filter(Boolean), choice].join(", ") }));
-  }, () => field.setCustomValidity(""));
-  return { wrapper, update(next: readonly string[]) { values = next; } };
+  const tags: string[] = [];
+  const wrapper = element("div", "scry-suggested-input image-import-tag-field");
+  const summary = element("div", "image-import-tag-summary");
+  summary.setAttribute("aria-label", "Selected tags");
+  summary.setAttribute("aria-live", "polite");
+  const entry = element("div", "image-import-tag-entry");
+  const field = input("tag");
+  field.setAttribute("aria-label", "Add tag");
+  field.autocomplete = "off";
+  field.spellcheck = false;
+  entry.append(icon("tag"), field);
+  const suggestions = element("div", "scry-suggestions");
+  suggestions.setAttribute("role", "group");
+  suggestions.setAttribute("aria-label", "Tag suggestions");
+  wrapper.append(entry, suggestions);
+
+  function renderTags(): void {
+    summary.hidden = !tags.length;
+    summary.replaceChildren(...tags.map((tag, index) => {
+      const chip = button("", () => {
+        tags.splice(index, 1);
+        field.setCustomValidity("");
+        renderTags();
+        renderSuggestions();
+        field.focus();
+      }, "image-import-tag");
+      chip.setAttribute("aria-label", `Remove tag ${tag}`);
+      chip.append(element("span", "", tag), icon("close"));
+      return chip;
+    }));
+  }
+
+  function addTags(input: string): boolean {
+    const existing = new Map(values.map(value => [value.toLowerCase(), value]));
+    const selected = new Set(tags.map(tag => tag.toLowerCase()));
+    let added = false;
+    for (const parsed of parseTags(input)) {
+      const key = parsed.toLowerCase();
+      if (selected.has(key)) continue;
+      tags.push(existing.get(key) ?? parsed);
+      selected.add(key);
+      added = true;
+    }
+    if (added) {
+      field.setCustomValidity("");
+      renderTags();
+    }
+    return added;
+  }
+
+  function commit(): boolean {
+    const added = addTags(field.value);
+    if (parseTags(field.value).length) field.value = "";
+    renderSuggestions();
+    return added;
+  }
+
+  function renderSuggestions(): void {
+    const query = field.value.trim().toLowerCase();
+    const selected = new Set(tags.map(tag => tag.toLowerCase()));
+    suggestions.replaceChildren(...values.filter(value =>
+      !selected.has(value.toLowerCase()) && value.toLowerCase().includes(query)).slice(0, 5).map(value => {
+      const choice = button(value, () => {
+        addTags(value);
+        field.value = "";
+        renderSuggestions();
+        field.focus();
+      });
+      choice.onpointerdown = event => event.preventDefault();
+      return choice;
+    }));
+  }
+
+  entry.onclick = event => { if (event.target !== field) field.focus(); };
+  field.onclick = renderSuggestions;
+  field.oninput = () => {
+    field.setCustomValidity("");
+    const match = /^(.*[,\n])([^,\n]*)$/s.exec(field.value);
+    if (match) {
+      addTags(match[1]);
+      field.value = match[2];
+    }
+    renderSuggestions();
+  };
+  field.onkeydown = event => {
+    if (event.isComposing) return;
+    if ((event.key === "," || event.key === "Enter" || event.key === "Tab") && field.value.trim()) {
+      if (event.key !== "Tab") event.preventDefault();
+      commit();
+      return;
+    }
+    if (event.key === "Backspace" && !field.value && tags.length) {
+      tags.pop();
+      renderTags();
+      renderSuggestions();
+      return;
+    }
+    if (event.key === "Escape") {
+      suggestions.replaceChildren();
+      return;
+    }
+    if (event.key === "ArrowDown" && suggestions.firstElementChild) {
+      event.preventDefault();
+      (suggestions.firstElementChild as HTMLButtonElement).focus();
+    }
+  };
+  wrapper.onkeydown = event => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp" || event.target === field) return;
+    const choices = [...suggestions.querySelectorAll("button")];
+    const index = choices.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === "ArrowDown" ? choices[index + 1] : choices[index - 1] ?? field;
+    if (!next) return;
+    event.preventDefault();
+    next.focus();
+  };
+  wrapper.addEventListener("focusout", () => queueMicrotask(() => {
+    if (wrapper.contains(document.activeElement)) return;
+    commit();
+    suggestions.replaceChildren();
+  }));
+  renderTags();
+
+  return {
+    wrapper,
+    summary,
+    tags: () => [...tags],
+    reportValidity(): boolean {
+      commit();
+      field.setCustomValidity(tags.length ? "" : "Enter at least one tag.");
+      return field.reportValidity();
+    },
+    update(next: readonly string[]) { values = next; },
+  };
 }
 
 function mount(container: HTMLElement, tools: HTMLElement): () => void {
@@ -227,11 +352,20 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const importFields = element("fieldset", "image-import-fields");
   importFields.disabled = true;
   importPanel.append(importFields);
-  const importTags = input("Tags (comma-separated)");
-  const importSource = input("Source");
-  const tagChoices = importTagChoices(importTags);
-  const sourceChoices = importChoices(importSource);
-  importTags.required = importSource.required = true;
+  const importSource = input("source");
+  importSource.setAttribute("aria-label", "Source");
+  const sourceSummary = element("span", "image-import-source-summary");
+  function renderSourceSummary(): void {
+    const value = importSource.value.trim();
+    sourceSummary.hidden = !value;
+    sourceSummary.replaceChildren(element("span", "", "Source"), element("strong", "", value));
+  }
+  const tagInput = importTagInput();
+  const sourceChoices = importChoices(importSource, renderSourceSummary);
+  sourceChoices.wrapper.classList.add("image-import-source-field");
+  sourceChoices.wrapper.prepend(icon("source"));
+  importSource.required = true;
+  renderSourceSummary();
   const importFiles = input("Images or ZIP files to add", "file");
   importFiles.accept = "image/*,.zip,application/zip,application/x-zip-compressed";
   importFiles.multiple = true;
@@ -390,7 +524,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   const linkRow = element("label", "image-import-links");
   linkRow.append(icon("link"), importUrls);
   const inputs = element("div", "image-import-inputs");
-  inputs.append(chooseFiles, importFiles, linkRow);
+  inputs.append(linkRow, chooseFiles, importFiles);
   importFiles.onchange = () => {
     queueFiles(Array.from(importFiles.files ?? []));
     importFiles.value = "";
@@ -399,16 +533,20 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     importMessage.textContent = "";
   };
   const metadataFields = element("div", "image-import-metadata");
-  metadataFields.append(tagChoices.wrapper, sourceChoices.wrapper);
+  metadataFields.append(sourceChoices.wrapper, tagInput.wrapper);
   const importPicker = element("div", "image-import-picker");
-  importPicker.append(importQueue, inputs);
+  const importSummary = element("div", "image-import-summary");
+  const metadataSummary = element("div", "image-import-metadata-summary");
+  metadataSummary.append(sourceSummary, tagInput.summary);
+  importSummary.append(importQueue, metadataSummary);
+  importPicker.append(importSummary, inputs, metadataFields);
   const closeImport = button("", () => setImportOpen(false), "image-import-close");
   setAction(closeImport, "close", "Close");
+  const importDialogActions = element("div", "image-import-dialog-actions");
+  importDialogActions.append(closeImport, addImages);
   const importTop = element("div", "image-import-top");
-  importTop.append(importPicker, closeImport);
-  const importActions = element("div", "image-import-actions");
-  importActions.append(metadataFields, addImages);
-  importFields.append(importTop, importActions, importMessage);
+  importTop.append(importPicker, importDialogActions);
+  importFields.append(importTop, importMessage);
   const importDialog = element("dialog", "image-import-dialog");
   importDialog.setAttribute("aria-label", "Add images");
   importDialog.append(importPanel);
@@ -446,9 +584,8 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       return;
     }
     importMessage.textContent = "";
-    const tags = parseTags(importTags.value);
-    importTags.setCustomValidity(tags.length ? "" : "Enter at least one tag.");
-    if (!importTags.reportValidity() || !importSource.reportValidity()) return;
+    if (!tagInput.reportValidity() || !importSource.reportValidity()) return;
+    const tags = tagInput.tags();
     const permission = root.handle.requestPermission({ mode: "readwrite" });
     void run(async () => {
       status.textContent = "";
@@ -815,7 +952,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
         return oldestFirst ? compared : -compared;
       });
       searchFacets = { source: result.sources, tag: result.tags };
-      tagChoices.update(result.tags);
+      tagInput.update(result.tags);
       sourceChoices.update(result.sources);
       count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
       releaseThumbnails();
