@@ -558,7 +558,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     if (queueLinks(importUrls.value)) importUrls.value = "";
   };
   const chooseFiles = button("", () => importFiles.click());
-  setAction(chooseFiles, "addImages", "Choose files");
+  setAction(chooseFiles, "add", "Choose files");
   const linkRow = element("label", "image-import-links");
   linkRow.append(icon("link"), importUrls);
   const inputs = element("div", "image-import-inputs");

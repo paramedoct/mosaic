@@ -11,6 +11,7 @@ import {
   Link,
   MapPin,
   Maximize2,
+  Plus,
   RefreshCw,
   Save,
   SatelliteDish,
@@ -26,6 +27,7 @@ import {
 type IconDefinition = Parameters<typeof createElement>[0];
 
 const icons = {
+  add: Plus,
   addImages: ImagePlus,
   archive: FileArchive,
   close: X,
