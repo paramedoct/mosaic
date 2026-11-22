@@ -9,7 +9,7 @@ import { button, downloadHtml, element, errorMessage, input } from "./scry/ui";
 import "./scry/style.css";
 
 const files = new FileTransport();
-const cardImageCacheLimit = 32;
+const cardImageCacheLimit = 100;
 type FileConnection = { name: string; root: FileRoot };
 type GridEntry = { image: ImageSummary; group?: ImageGroup; createdAt: string; id: number };
 
@@ -714,6 +714,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   let gridRenderFrame: number | undefined;
   let gridRenderKey = "";
   let gridVersion = 0;
+  const renderedGridCards = new Map<number, HTMLButtonElement>();
 
   const dialog = element("dialog", "image-dialog");
   dialog.setAttribute("aria-label", "Image viewer");
@@ -865,29 +866,38 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     cardImageUrls.clear();
     activeCardImages.clear();
     loadingCardImages = new Set<string>();
+    renderedGridCards.clear();
   }
 
-  function detachGridImages(): void {
-    for (const image of grid.querySelectorAll<HTMLImageElement>(".image-card img")) {
+  function removeGridCard(index: number): void {
+    const card = renderedGridCards.get(index);
+    if (!card) return;
+    const image = card.querySelector<HTMLImageElement>("img");
+    if (image) {
       observer.unobserve(image);
       deactivateCardImage(image);
     }
+    card.remove();
+    renderedGridCards.delete(index);
   }
 
-  function createGridCard(entry: GridEntry, index: number, size: number, gap: number, columns: number): HTMLButtonElement {
+  function positionGridCard(card: HTMLButtonElement, index: number, size: number, gap: number, columns: number): void {
+    const row = Math.floor(index / columns);
+    const column = index % columns;
+    card.style.insetInlineStart = `${column * (size + gap)}px`;
+    card.style.top = `${row * (size + gap)}px`;
+    card.style.width = `${size}px`;
+    card.style.height = `${size}px`;
+  }
+
+  function createGridCard(entry: GridEntry): HTMLButtonElement {
     const { image, group } = entry;
     const card = button("", () => {
       viewerGroup = group;
       viewerImages = group?.images ?? gridImages;
       void showImage(group ? 0 : gridImages.findIndex(candidate => candidate.id === image.id));
     }, group ? "image-card image-group-card" : "image-card");
-    const row = Math.floor(index / columns);
-    const column = index % columns;
     card.style.position = "absolute";
-    card.style.insetInlineStart = `${column * (size + gap)}px`;
-    card.style.top = `${row * (size + gap)}px`;
-    card.style.width = `${size}px`;
-    card.style.height = `${size}px`;
     const label = image.tags.join(", ") || image.source;
     card.setAttribute("aria-label", group ? `View ${label}, ${group.images.length} images` : `View ${label}`);
     const preview = element("img");
@@ -929,9 +939,20 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     const key = `${gridVersion}:${width}:${columns}:${start}:${end}`;
     if (key === gridRenderKey) return;
     gridRenderKey = key;
-    detachGridImages();
-    grid.replaceChildren(...gridEntries.slice(start, end)
-      .map((entry, offset) => createGridCard(entry, start + offset, size, gap, columns)));
+    for (const index of [...renderedGridCards.keys()]) {
+      if (index < start || index >= end) removeGridCard(index);
+    }
+    const cards: HTMLButtonElement[] = [];
+    for (let index = start; index < end; index++) {
+      let card = renderedGridCards.get(index);
+      if (!card) {
+        card = createGridCard(gridEntries[index]);
+        renderedGridCards.set(index, card);
+      }
+      positionGridCard(card, index, size, gap, columns);
+      cards.push(card);
+    }
+    grid.append(...cards);
   }
 
   function scheduleGridRender(): void {
