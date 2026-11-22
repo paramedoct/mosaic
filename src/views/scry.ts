@@ -4,265 +4,20 @@ import { ScryProvider, loadSqlite, type ImageGroup, type ImageSummary } from "..
 import { FileTransport, type FileRoot } from "../transports/file";
 import { downloadImages, downloadUrls } from "./scry/downloads";
 import { chooseDirectory, droppedDirectory, hasReadAccess, requestReadAccess, savedFolder, waitFor } from "./scry/folders";
+import { createImageGrid, type ImageGridEntry } from "./scry/grid";
+import { importSourceInput, importTagInput } from "./scry/metadata";
 import { imageSearchChoices, parseImageSearch } from "./scry/search";
+import { suggestedInput } from "./scry/suggestions";
 import { button, downloadHtml, element, errorMessage, input } from "./scry/ui";
 import "./scry/style.css";
 
 const files = new FileTransport();
-const cardImageCacheLimit = 100;
 type FileConnection = { name: string; root: FileRoot };
-type GridEntry = { image: ImageSummary; group?: ImageGroup; createdAt: string; id: number };
 
 function bytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function suggestedInput(
-  field: HTMLInputElement, choices: (value: string) => readonly { label: string; value: string }[], edited?: () => void,
-  selected?: (value: string) => void,
-) {
-  const wrapper = element("div", "scry-suggested-input");
-  const suggestions = element("div", "scry-suggestions");
-  suggestions.setAttribute("role", "group");
-  suggestions.setAttribute("aria-label", `${field.placeholder} suggestions`);
-  wrapper.append(field, suggestions);
-  function render(): void {
-    suggestions.replaceChildren(...choices(field.value).map(({ label, value }) => button(label, () => {
-      field.value = value;
-      field.focus();
-      if (label.endsWith(":") && edited && value.endsWith(":")) render();
-      else suggestions.replaceChildren();
-      edited?.();
-      selected?.(value);
-    })));
-  }
-  field.onclick = render;
-  field.oninput = () => {
-    render();
-    edited?.();
-  };
-  wrapper.addEventListener("focusout", event => {
-    if (!wrapper.contains(event.relatedTarget as Node | null)) suggestions.replaceChildren();
-  });
-  wrapper.onkeydown = event => {
-    if (event.key === "Escape" && suggestions.childElementCount) {
-      event.preventDefault();
-      field.focus();
-      suggestions.replaceChildren();
-      return;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    if (!suggestions.childElementCount && event.target === field && event.key === "ArrowDown") render();
-    const choices = [...suggestions.querySelectorAll("button")];
-    const index = choices.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === "ArrowDown" ? choices[index + 1] : choices[index - 1] ?? field;
-    if (!choices.length || !next) return;
-    event.preventDefault();
-    next.focus();
-  };
-  return wrapper;
-}
-
-function importSourceInput() {
-  let values: readonly string[] = [];
-  let source = "";
-  const field = input("source");
-  field.setAttribute("aria-label", "Source");
-  field.autocomplete = "off";
-  field.spellcheck = false;
-  const summary = button("", () => {
-    source = "";
-    renderSummary();
-    field.focus();
-  }, "image-import-source-summary");
-  summary.setAttribute("aria-live", "polite");
-  function renderSummary(): void {
-    summary.hidden = !source;
-    summary.setAttribute("aria-label", source ? `Remove source ${source}` : "No source selected");
-    summary.replaceChildren(element("span", "", "Source"), element("strong", "", source), icon("close"));
-  }
-  function commit(value = field.value): boolean {
-    const trimmed = value.trim();
-    if (!trimmed) return false;
-    source = values.find(candidate => candidate.toLowerCase() === trimmed.toLowerCase()) ?? trimmed;
-    field.value = "";
-    field.setCustomValidity("");
-    renderSummary();
-    return true;
-  }
-  const wrapper = suggestedInput(field, value => {
-    const query = value.trim().toLowerCase();
-    return values.filter(choice => choice !== value && choice.toLowerCase().includes(query)).slice(0, 5)
-      .map(choice => ({ label: choice, value: choice }));
-  }, () => field.setCustomValidity(""), commit);
-  wrapper.classList.add("image-import-source-field");
-  wrapper.prepend(icon("source"));
-  field.addEventListener("keydown", event => {
-    if (event.isComposing || !field.value.trim() || event.key !== "Enter" && event.key !== "Tab") return;
-    if (event.key === "Enter") event.preventDefault();
-    commit();
-    wrapper.querySelector(".scry-suggestions")?.replaceChildren();
-  });
-  wrapper.addEventListener("focusout", () => queueMicrotask(() => {
-    if (wrapper.contains(document.activeElement)) return;
-    commit();
-  }));
-  renderSummary();
-  return {
-    wrapper,
-    summary,
-    value: () => source,
-    reportValidity(): boolean {
-      commit();
-      field.setCustomValidity(source ? "" : "Enter a source.");
-      return field.reportValidity();
-    },
-    update(next: readonly string[]) { values = next; },
-  };
-}
-
-function parseTags(value: string): string[] {
-  return [...new Map(value.split(/[,\n]/).map(tag => tag.trim()).filter(Boolean)
-    .map(tag => [tag.toLowerCase(), tag] as const)).values()];
-}
-
-function importTagInput() {
-  let values: readonly string[] = [];
-  const tags: string[] = [];
-  const wrapper = element("div", "scry-suggested-input image-import-tag-field");
-  const summary = element("div", "image-import-tag-summary");
-  summary.setAttribute("aria-label", "Selected tags");
-  summary.setAttribute("aria-live", "polite");
-  const entry = element("div", "image-import-tag-entry");
-  const field = input("tag");
-  field.setAttribute("aria-label", "Add tag");
-  field.autocomplete = "off";
-  field.spellcheck = false;
-  entry.append(icon("tag"), field);
-  const suggestions = element("div", "scry-suggestions");
-  suggestions.setAttribute("role", "group");
-  suggestions.setAttribute("aria-label", "Tag suggestions");
-  wrapper.append(entry, suggestions);
-
-  function renderTags(): void {
-    summary.hidden = !tags.length;
-    summary.replaceChildren(...tags.map((tag, index) => {
-      const chip = button("", () => {
-        tags.splice(index, 1);
-        field.setCustomValidity("");
-        renderTags();
-        renderSuggestions();
-        field.focus();
-      }, "image-import-tag");
-      chip.setAttribute("aria-label", `Remove tag ${tag}`);
-      chip.append(element("span", "", tag), icon("close"));
-      return chip;
-    }));
-  }
-
-  function addTags(input: string): boolean {
-    const existing = new Map(values.map(value => [value.toLowerCase(), value]));
-    const selected = new Set(tags.map(tag => tag.toLowerCase()));
-    let added = false;
-    for (const parsed of parseTags(input)) {
-      const key = parsed.toLowerCase();
-      if (selected.has(key)) continue;
-      tags.push(existing.get(key) ?? parsed);
-      selected.add(key);
-      added = true;
-    }
-    if (added) {
-      field.setCustomValidity("");
-      renderTags();
-    }
-    return added;
-  }
-
-  function commit(): boolean {
-    const added = addTags(field.value);
-    if (parseTags(field.value).length) field.value = "";
-    renderSuggestions();
-    return added;
-  }
-
-  function renderSuggestions(): void {
-    const query = field.value.trim().toLowerCase();
-    const selected = new Set(tags.map(tag => tag.toLowerCase()));
-    suggestions.replaceChildren(...values.filter(value =>
-      !selected.has(value.toLowerCase()) && value.toLowerCase().includes(query)).slice(0, 5).map(value => {
-      const choice = button(value, () => {
-        addTags(value);
-        field.value = "";
-        renderSuggestions();
-        field.focus();
-      });
-      choice.onpointerdown = event => event.preventDefault();
-      return choice;
-    }));
-  }
-
-  entry.onclick = event => { if (event.target !== field) field.focus(); };
-  field.onclick = renderSuggestions;
-  field.oninput = () => {
-    field.setCustomValidity("");
-    const match = /^(.*[,\n])([^,\n]*)$/s.exec(field.value);
-    if (match) {
-      addTags(match[1]);
-      field.value = match[2];
-    }
-    renderSuggestions();
-  };
-  field.onkeydown = event => {
-    if (event.isComposing) return;
-    if ((event.key === "," || event.key === "Enter" || event.key === "Tab") && field.value.trim()) {
-      if (event.key !== "Tab") event.preventDefault();
-      commit();
-      return;
-    }
-    if (event.key === "Backspace" && !field.value && tags.length) {
-      tags.pop();
-      renderTags();
-      renderSuggestions();
-      return;
-    }
-    if (event.key === "Escape") {
-      suggestions.replaceChildren();
-      return;
-    }
-    if (event.key === "ArrowDown" && suggestions.firstElementChild) {
-      event.preventDefault();
-      (suggestions.firstElementChild as HTMLButtonElement).focus();
-    }
-  };
-  wrapper.onkeydown = event => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp" || event.target === field) return;
-    const choices = [...suggestions.querySelectorAll("button")];
-    const index = choices.indexOf(document.activeElement as HTMLButtonElement);
-    const next = event.key === "ArrowDown" ? choices[index + 1] : choices[index - 1] ?? field;
-    if (!next) return;
-    event.preventDefault();
-    next.focus();
-  };
-  wrapper.addEventListener("focusout", () => queueMicrotask(() => {
-    if (wrapper.contains(document.activeElement)) return;
-    commit();
-    suggestions.replaceChildren();
-  }));
-  renderTags();
-
-  return {
-    wrapper,
-    summary,
-    tags: () => [...tags],
-    reportValidity(): boolean {
-      commit();
-      field.setCustomValidity(tags.length ? "" : "Enter at least one tag.");
-      return field.reportValidity();
-    },
-    update(next: readonly string[]) { values = next; },
-  };
 }
 
 function mount(container: HTMLElement, tools: HTMLElement): () => void {
@@ -283,9 +38,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   let wheelDistance = 0;
   let wheelLocked = false;
   let wheelReset: ReturnType<typeof setTimeout> | undefined;
-  const cardImageUrls = new Map<string, string>();
-  const activeCardImages = new Map<string, Set<HTMLImageElement>>();
-  let loadingCardImages = new Set<string>();
   const page = element("section", "library-view local-images-view");
   const toolbar = element("div", "scry-toolbar");
   const connectionToggle = button("", () => setConnectionOpen(!connectionDialog.open), "scry-tool-button");
@@ -707,14 +459,14 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   filters.append(searchField, count, order);
   const libraryControls = element("header", "library-controls");
   libraryControls.append(filters);
-  const grid = element("div", "image-grid");
-  grid.setAttribute("aria-label", "Image collection");
-  let gridEntries: GridEntry[] = [];
-  let gridImages: readonly ImageSummary[] = [];
-  let gridRenderFrame: number | undefined;
-  let gridRenderKey = "";
-  let gridVersion = 0;
-  const renderedGridCards = new Map<number, HTMLButtonElement>();
+  const imageGrid = createImageGrid({
+    open({ image, group }, standaloneImages) {
+      viewerGroup = group;
+      viewerImages = group?.images ?? standaloneImages;
+      void showImage(group ? 0 : standaloneImages.findIndex(candidate => candidate.id === image.id));
+    },
+  });
+  const grid = imageGrid.element;
 
   const dialog = element("dialog", "image-dialog");
   dialog.setAttribute("aria-label", "Image viewer");
@@ -819,154 +571,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
   });
   page.append(libraryControls, grid, status, connectionDialog, importDialog, dialog);
   container.replaceChildren(page);
-  const observer = new IntersectionObserver(entries => {
-    for (const entry of entries) {
-      const image = entry.target as HTMLImageElement;
-      if (entry.isIntersecting) activateCardImage(image, request);
-      else deactivateCardImage(image);
-    }
-  }, { rootMargin: "150px" });
-
-  function trimCardImageCache(): void {
-    let inactive = [...cardImageUrls.keys()].filter(id => !activeCardImages.has(id)).length;
-    for (const [id, url] of cardImageUrls) {
-      if (inactive <= cardImageCacheLimit) break;
-      if (activeCardImages.has(id)) continue;
-      cardImageUrls.delete(id);
-      URL.revokeObjectURL(url);
-      inactive -= 1;
-    }
-  }
-
-  function activateCardImage(image: HTMLImageElement, token: number): void {
-    const id = image.dataset.id;
-    if (!id) return;
-    const active = activeCardImages.get(id) ?? new Set<HTMLImageElement>();
-    active.add(image);
-    activeCardImages.set(id, active);
-    const cached = cardImageUrls.get(id);
-    if (cached) {
-      cardImageUrls.delete(id);
-      cardImageUrls.set(id, cached);
-      image.src = cached;
-      return;
-    }
-    void loadCardImage(id, token);
-  }
-
-  function deactivateCardImage(image: HTMLImageElement): void {
-    const id = image.dataset.id;
-    if (!id) return;
-    const active = activeCardImages.get(id);
-    active?.delete(image);
-    if (active && !active.size) activeCardImages.delete(id);
-    if (image.hasAttribute("src")) image.removeAttribute("src");
-    trimCardImageCache();
-  }
-
-  function releaseCardImages(): void {
-    observer.disconnect();
-    for (const url of cardImageUrls.values()) URL.revokeObjectURL(url);
-    cardImageUrls.clear();
-    activeCardImages.clear();
-    loadingCardImages = new Set<string>();
-    renderedGridCards.clear();
-  }
-
-  function removeGridCard(index: number): void {
-    const card = renderedGridCards.get(index);
-    if (!card) return;
-    const image = card.querySelector<HTMLImageElement>("img");
-    if (image) {
-      observer.unobserve(image);
-      deactivateCardImage(image);
-    }
-    card.remove();
-    renderedGridCards.delete(index);
-  }
-
-  function positionGridCard(card: HTMLButtonElement, index: number, size: number, gap: number, columns: number): void {
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    card.style.insetInlineStart = `${column * (size + gap)}px`;
-    card.style.top = `${row * (size + gap)}px`;
-    card.style.width = `${size}px`;
-    card.style.height = `${size}px`;
-  }
-
-  function createGridCard(entry: GridEntry): HTMLButtonElement {
-    const { image, group } = entry;
-    const card = button("", () => {
-      viewerGroup = group;
-      viewerImages = group?.images ?? gridImages;
-      void showImage(group ? 0 : gridImages.findIndex(candidate => candidate.id === image.id));
-    }, group ? "image-card image-group-card" : "image-card");
-    card.style.position = "absolute";
-    const label = image.tags.join(", ") || image.source;
-    card.setAttribute("aria-label", group ? `View ${label}, ${group.images.length} images` : `View ${label}`);
-    const preview = element("img");
-    preview.alt = label;
-    preview.loading = "lazy";
-    preview.dataset.id = image.id;
-    preview.onerror = () => { preview.alt = "Image format could not be displayed"; };
-    card.append(preview);
-    if (group) {
-      const badge = element("span", "image-group-count", String(group.images.length));
-      badge.setAttribute("aria-hidden", "true");
-      card.append(badge);
-    }
-    observer.observe(preview);
-    return card;
-  }
-
-  function renderGridWindow(): void {
-    gridRenderFrame = undefined;
-    if (!gridEntries.length || !grid.isConnected) return;
-    const style = getComputedStyle(grid);
-    const minimum = Number.parseFloat(style.getPropertyValue("--image-card-min")) || 170;
-    const gap = Number.parseFloat(style.getPropertyValue("--image-grid-gap")) || 8;
-    const width = grid.clientWidth;
-    if (!width) return;
-    const columns = Math.max(1, Math.floor((width + gap) / (minimum + gap)));
-    const size = (width - gap * (columns - 1)) / columns;
-    const stride = size + gap;
-    const rows = Math.ceil(gridEntries.length / columns);
-    const height = rows * size + Math.max(0, rows - 1) * gap;
-    grid.style.height = `${height}px`;
-    const bounds = grid.getBoundingClientRect();
-    const visibleStart = Math.max(0, Math.min(height, -bounds.top));
-    const visibleEnd = Math.max(visibleStart, Math.min(height, window.innerHeight - bounds.top));
-    const startRow = Math.max(0, Math.floor(visibleStart / stride) - 2);
-    const endRow = Math.min(rows, Math.max(startRow + 1, Math.ceil(visibleEnd / stride) + 2));
-    const start = startRow * columns;
-    const end = Math.min(gridEntries.length, endRow * columns);
-    const key = `${gridVersion}:${width}:${columns}:${start}:${end}`;
-    if (key === gridRenderKey) return;
-    gridRenderKey = key;
-    for (const index of [...renderedGridCards.keys()]) {
-      if (index < start || index >= end) removeGridCard(index);
-    }
-    const cards: HTMLButtonElement[] = [];
-    for (let index = start; index < end; index++) {
-      let card = renderedGridCards.get(index);
-      if (!card) {
-        card = createGridCard(gridEntries[index]);
-        renderedGridCards.set(index, card);
-      }
-      positionGridCard(card, index, size, gap, columns);
-      cards.push(card);
-    }
-    grid.append(...cards);
-  }
-
-  function scheduleGridRender(): void {
-    if (gridRenderFrame !== undefined) return;
-    gridRenderFrame = requestAnimationFrame(renderGridWindow);
-  }
-
-  const gridResizeObserver = new ResizeObserver(scheduleGridRender);
-  gridResizeObserver.observe(grid);
-  window.addEventListener("scroll", scheduleGridRender, { passive: true });
 
   function setConnectionOpen(open: boolean): void {
     if (open && !connectionDialog.open) connectionDialog.showModal();
@@ -984,18 +588,11 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     request += 1;
     dialog.close();
     setImportOpen(false);
-    releaseCardImages();
+    imageGrid.clear();
     provider?.close();
     provider = undefined;
     source = undefined;
     searchFacets = { source: [], tag: [] };
-    gridEntries = [];
-    gridImages = [];
-    gridVersion += 1;
-    gridRenderKey = "";
-    grid.classList.remove("is-virtualized");
-    grid.style.height = "";
-    grid.replaceChildren();
     connectionName.textContent = "No library connected";
     count.textContent = "";
     reload.disabled = true;
@@ -1077,34 +674,6 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     }
   }
 
-  async function loadCardImage(id: string, token: number): Promise<void> {
-    const current = provider;
-    const loading = loadingCardImages;
-    if (!current || loading.has(id)) return;
-    loading.add(id);
-    try {
-      const blob = await current.readImage(id);
-      if (disposed || request !== token) return;
-      const url = URL.createObjectURL(blob);
-      const previous = cardImageUrls.get(id);
-      if (previous) URL.revokeObjectURL(previous);
-      cardImageUrls.delete(id);
-      cardImageUrls.set(id, url);
-      for (const image of activeCardImages.get(id) ?? []) if (image.isConnected) image.src = url;
-      trimCardImageCache();
-    } catch {
-      if (!disposed && request === token) {
-        for (const image of activeCardImages.get(id) ?? []) {
-          image.alt = "Original image unavailable";
-          const card = image.closest("button");
-          if (!card?.querySelector(".image-unavailable")) {
-            card?.append(element("span", "library-hint image-unavailable", "Original unavailable"));
-          }
-        }
-      }
-    } finally { loading.delete(id); }
-  }
-
   async function showImage(index: number): Promise<void> {
     const image = viewerImages[index];
     const current = provider;
@@ -1149,7 +718,7 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       const result = await current.fetch({ terms: parseImageSearch(search.value), order: oldestFirst ? "oldest" : "newest" });
       if (disposed || token !== request) return;
       const images = result.standaloneImages;
-      const entries: GridEntry[] = [
+      const entries: ImageGridEntry[] = [
         ...images.map(image => ({ image, group: undefined as ImageGroup | undefined, createdAt: image.createdAt, id: Number(image.id) })),
         ...result.groups.map(group => ({ image: group.images[0], group, createdAt: group.createdAt, id: Number(group.id) })),
       ].sort((left, right) => {
@@ -1160,16 +729,8 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
       tagInput.update(result.tags);
       sourceInput.update(result.sources);
       count.textContent = entries.length === 1 ? "1 result" : `${entries.length} results`;
-      releaseCardImages();
-      gridEntries = entries;
-      gridImages = images;
-      gridVersion += 1;
-      gridRenderKey = "";
-      grid.replaceChildren();
-      grid.classList.toggle("is-virtualized", Boolean(entries.length));
-      grid.style.height = "";
-      if (entries.length) renderGridWindow();
-      else grid.append(element("p", "library-empty", result.total ? "No images match these filters." : "No images are registered in this library."));
+      imageGrid.set(entries, images, id => current.readImage(id),
+        result.total ? "No images match these filters." : "No images are registered in this library.");
     } catch (error) { if (!disposed && token === request) status.textContent = errorMessage(error); }
   }
 
@@ -1243,16 +804,13 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     pendingConnection?.abort();
     clearTimeout(restoreTimer);
     clearTimeout(wheelReset);
-    gridResizeObserver.disconnect();
-    window.removeEventListener("scroll", scheduleGridRender);
-    if (gridRenderFrame !== undefined) cancelAnimationFrame(gridRenderFrame);
+    imageGrid.dispose();
     if (queueFrame !== undefined) cancelAnimationFrame(queueFrame);
     request += 1;
     viewerRequest += 1;
     dialog.close();
     setConnectionOpen(false);
     setImportOpen(false);
-    releaseCardImages();
     provider?.close();
     queuedItems.forEach(item => { if (item.kind === "file" && item.preview) URL.revokeObjectURL(item.preview); });
     if (viewerUrl) URL.revokeObjectURL(viewerUrl);
