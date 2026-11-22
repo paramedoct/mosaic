@@ -785,6 +785,10 @@ function mount(container: HTMLElement, tools: HTMLElement): () => void {
     if (event.key === "ArrowLeft") { event.preventDefault(); void move(-1); }
     if (event.key === "ArrowRight") { event.preventDefault(); void move(1); }
   });
+  dialog.addEventListener("contextmenu", event => {
+    event.preventDefault();
+    dialog.close();
+  });
   stage.addEventListener("wheel", event => {
     if (!viewerGroup || stage.classList.contains("actual-size")) return;
     event.preventDefault();
